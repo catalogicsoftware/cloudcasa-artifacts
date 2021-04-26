@@ -65,9 +65,21 @@ function get_kubeagent_pod_logs() {
 get_resources
 
 # Get kubeagent logs only if the pod is in a running state.
-KAGENT_POD=$(kubectl get pods -n $CLOUDCASA_NAMESPACE 2>/dev/null | awk '/[kubeagent]/ {print $1}')
+KAGENT_POD=$(kubectl get pods -n $CLOUDCASA_NAMESPACE 2>/dev/null | awk '/^kubeagent-/ {print $1}')
 if [ ! "$KAGENT_POD" == "" ]; then
 	get_kubeagent_pod_logs
 fi
 
+function get_kubemover_logs() {
+	PODS=$(kubectl get pods -n $CLOUDCASA_NAMESPACE | awk 'NR > 1 {print $1}')
+	MOVER_PODS=$(kubectl get pods -n $CLOUDCASA_NAMESPACE 2>/dev/null | awk '/^kubemover/ {print $1}')
+	for pod in $MOVER_PODS
+	do
+		print_header "Start of $pod logs"
+		kubectl logs -n $CLOUDCASA_NAMESPACE "$pod"
+		print_footer "End of $pod logs"
+	done
+}
+
+get_kubemover_logs
 describe_all
