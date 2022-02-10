@@ -51,6 +51,13 @@ function describe_all() {
 	print_footer "End of output"
 }
 
+# Saves logs from kubeagent manager pod.
+function get_kubeagent_manager_pod_logs() {
+	print_header "Start of Kubeagent manager logs"
+	kubectl logs -n $CLOUDCASA_NAMESPACE "$KAGENT_MANAGER_POD"
+	print_footer "End of Kubeagent manager logs"
+}
+
 # Saves logs from kubeagent pod (kubeagent and Velero containers).
 function get_kubeagent_pod_logs() {
 	print_header "Start of Kubeagent logs"
@@ -63,6 +70,12 @@ function get_kubeagent_pod_logs() {
 }
 
 get_resources
+
+# Get kubeagent manager logs only if the pod is in a running state.
+KAGENT_MANAGER_POD=$(kubectl get pods -n $CLOUDCASA_NAMESPACE 2>/dev/null | awk '/^cloudcasa-kubeagent-manager-/ {print $1}')
+if [ ! "$KAGENT_MANAGER_POD" == "" ]; then
+	get_kubeagent_manager_pod_logs
+fi
 
 # Get kubeagent logs only if the pod is in a running state.
 KAGENT_POD=$(kubectl get pods -n $CLOUDCASA_NAMESPACE 2>/dev/null | awk '/^kubeagent-/ {print $1}')
