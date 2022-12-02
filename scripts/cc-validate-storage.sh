@@ -249,7 +249,7 @@ decommission()
 	PVCS=`kubectl get pvc -n $NS 2> /dev/null | grep -v 'NAME' | wc -l`
 	VSCS=`kubectl get volumesnapshotcontent | grep $NS | awk '{print $1}' | wc -l`
 
-	echo "Decommisioning namespace $NS with residue pods=$PODS, volumesnapshots=$VSS, volumesnapshotcontents=$VSCS ,pvcs=$PVCS"
+	echo "Deleting namespace $NS, pods=$PODS, volumesnapshots=$VSS, volumesnapshotcontents=$VSCS, pvcs=$PVCS"
 	[[ $PODS -gt 0 ]] && { deldepl $1; }
 	[[ $VSS -gt 0 ]] && { delvs $1; } 
 	[[ $PVCS -gt 0 ]] && { delpvc $1; }
