@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 
+###############################################
+# Copyright 2022 Catalogic Software Inc.   ####
+###############################################
+
 # Initialize all the associative array variables with global scope
 declare -A PROVISIONER
 declare -A IF_CSI_DRIVER
