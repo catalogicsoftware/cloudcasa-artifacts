@@ -7,6 +7,7 @@
 # Initialize all the associative array variables with global scope
 declare -A PROVISIONER
 declare -A IF_CSI_DRIVER
+declare -A RESULTS
 declare -a csidrivers
 declare -a storageclasses
 declare -a CRDS
@@ -48,26 +49,24 @@ case "$1" in
 esac
 
 
-
-divider='=============================='
-divider=$divider$divider
-
-#volumesnapshotclasses.snapshot.storage.k8s.io:apiextensions.k8s.io/v1 volumesnapshotcontents.snapshot.storage.k8s.io:apiextensions.k8s.io/v1 volumesnapshotlocations.velero.io:apiextensions.k8s.io/v1 volumesnapshots.snapshot.storage.k8s.io:apiextensions.k8s.io/v1
-
-header="\n%-40s %-40s\n"
-format="%-40s %-40s\n"
+div='------------------------------'
+divider="$div$div$div$div"
+headdiv="=============================="
+headdivider="$headdiv$headdiv$headdiv$headdiv"
 width=60
 TTC=20
-#CRDS=("volumesnapshotclasses.snapshot.storage.k8s.io" "volumesnapshotcontents.snapshot.storage.k8s.io" "volumesnapshots.snapshot.storage.k8s.io")
+CRDS=("volumesnapshotclasses.snapshot.storage.k8s.io:apiextensions.k8s.io/v1" "volumesnapshotcontents.snapshot.storage.k8s.io:apiextensions.k8s.io/v1" "volumesnapshots.snapshot.storage.k8s.io:apiextensions.k8s.io/v1")
 
-CRDS=("volumesnapshotclasses.snapshot.storage.k8s.io:apiextensions.k8s.io/v1" "volumesnapshotcontents.snapshot.storage.k8s.io:apiextensions.k8s.io/v1" "volumesnapshotlocations.velero.io:apiextensions.k8s.io/v1" "volumesnapshots.snapshot.storage.k8s.io:apiextensions.k8s.io/v1")
 
-echo "HOME:$HOME"
+
+# echo "HOME:$HOME"
 PATH_TO_YAML_FILES=$HOME/tmp/test_dir
+SCRIPT_VERSION=0.42
+echo "Version: $SCRIPT_VERSION"
 
 chkAllCrdsExists()
 {
-	printf "%$width.${width}s\n" "$divider"	
+	printf "$headdivider\n"	
 	echo
 	flag=0
 	for c in ${CRDS[@]}
@@ -78,7 +77,7 @@ chkAllCrdsExists()
 
 	[[ ${flag} -eq 1 ]] && { echo "Please install the missing CRDS first and then retry"; exit 1; } || { echo "CRD check PASSED"; }
 	echo
-	printf "%$width.${width}s\n" "$divider"
+	printf "$headdivider\n"
 }
 
 getCsiDrivers()
@@ -87,10 +86,10 @@ getCsiDrivers()
 	csidrivers=(`kubectl get csidrivers | grep -v 'NAME' |awk '{print $1}'`)
 	csidriverslen=${#csidrivers[@]}
 	[ $csidriverslen -gt 0 ] || { echo "No CSI drivers Found in the cluster, Exiting..."; exit 1; }
-	echo "Found these csi-drivers:"
+	printf "%-30s %-90s\n" "  " "Found these csi-drivers:"
 	csip=`echo ${csidrivers[@]} | sed s/' '/', '/g`
 	echo $csip
-	printf "%$width.${width}s\n" "$divider"
+	printf "$headdivider\n"
 }
 
 
@@ -111,9 +110,9 @@ getStorageClasses()
 	storageclasseslen=${#storageclasses[@]}
 	storageclassp=`echo ${storageclasses[@]} | sed s/' '/', '/g`
 	[ $storageclasseslen -gt 0 ] || { echo "No StorageClasses found in the cluster, Exiting ...."; exit 1; }
-	echo "Found following storage classes: "
+	printf "%-30s %-90s\n" "  " "Found following storage classes: "
 	echo $storageclassp
-	printf "%$width.${width}s\n" "$divider"
+	printf "$headdivider\n"
 }
 
 getVolumesnapshotClasses()
@@ -122,31 +121,35 @@ getVolumesnapshotClasses()
 	volumesnapshotclasslen=${#volumesnapshotclasses[@]}
 	volumesnapshotclassp=`echo ${volumesnapshotclasses[@]} |  sed s/' '/', '/g`
 	[ $volumesnapshotclasslen -gt 0 ] || { echo "No Volumesnapshotclass found in the cluster, Exiting ...."; exit 1; }
-        echo "Found following Volumesnapshotclasses: "
+        printf "%-30s %-90s\n"  "  " "Found following Volumesnapshotclasses: "
 	echo $volumesnapshotclassp
-	printf "%$width.${width}s\n" "$divider"
+	printf "$headdivider\n"
 }
 
 setProvisionerForSC()
 {
 	# For each storage class find the respective provisioner and unset the IF_CSI_DRIVER as 0 if no Value defind for any provisioner
+
 	echo
-	printf "%55s\n" "Mapping of Storage class with it's Provisioner"
-	printf "%${width}.${width}s" "--------------------------------------------------------------------"
-        printf "$header" "Storage Class" "Provisioner"
-	printf "%${width}.${width}s \n" "--------------------------------------------------------------------"	
+        div='------------------------------'
+        divider="+$div$div+$div$div+"
+        headdiv="=============================="
+        headdivider="+$headdiv$headdiv+$headdiv$headdiv+"
+        format="%-60s %-60s %-1s\n"
+        printf "$headdivider\n"
+	printf "%-30s %-90s %-1s\n" "|  " "Mapping of Storage class with it's Provisioner" "|"
+	printf "$headdivider\n"
+	printf "$format" "|  STORAGE CLASS" "|  PROVISIONER" "|"
+	printf "$headdivider\n"
+
 	for i in ${storageclasses[@]}
 	do
         	kubectl describe storageclass $i > /dev/null 2>&1 ; 
-		if [[ $? -eq 0 ]]; then
-			PROVISIONER[$i]=`kubectl describe storageclass $i | grep 'Provisioner' | cut -f2 -d ':' | xargs`
-		else 
-			echo "The Storageclass $i is not found, However the PV with storageclass $i do exist, Storageclass might be deleted accidently, Please create it"
-		fi
+		PROVISIONER[$i]=`kubectl describe storageclass $i | grep 'Provisioner' | cut -f2 -d ':' | xargs`
 		[[ ${IF_CSI_DRIVER[${PROVISIONER[$i]}]} -eq 1 ]] || IF_CSI_DRIVER[${PROVISIONER[$i]}]=0
-	printf "$format" "$i" "${PROVISIONER[$i]}"
+ 		printf "$format" "|  $i" "|  ${PROVISIONER[$i]}" "|"
+		printf "$divider\n" 
 	done
-	printf "%${width}.${width}s \n" "--------------------------------------------------------------------"
 }
 
 chknamespacestate()
@@ -254,6 +257,7 @@ decommission()
 	VSCS=`kubectl get volumesnapshotcontent | grep $NS | awk '{print $1}' | wc -l`
 
 	echo "Deleting namespace $NS, pods=$PODS, volumesnapshots=$VSS, volumesnapshotcontents=$VSCS, pvcs=$PVCS"
+
 	[[ $PODS -gt 0 ]] && { deldepl $1; }
 	[[ $VSS -gt 0 ]] && { delvs $1; } 
 	[[ $PVCS -gt 0 ]] && { delpvc $1; }
@@ -355,6 +359,24 @@ spec:
 EOF
 }
 
+resultsummary()
+{
+	div='--------------------'
+	divider="+$div$div$div$div+$div+"
+	headdiv="===================="
+	headdivider="+$headdiv$headdiv$headdiv$headdiv+$headdiv+"
+	format="%-80s %-20s %-1s\n"
+	
+	printf "$headdivider\n"
+	printf "%-40s %-60s %-1s\n" "|  " "RESULT SUMMARY" "|"
+	printf "$headdivider\n"
+	for ri in ${!RESIND[@]}
+	do
+		printf "$format" "|  ${RESIND[$ri]}" "|  ${RESULTS[${RESIND[$ri]}]}" "|"
+		[[ ${RESIND[$ri]} =~ "TESTED SC" ]] && { printf "$headdivider\n"; } || { printf "$divider\n"; } 
+	done		
+}
+
 export NS='csi-setup-test'
 export PD=`pwd`
 retries=$TTC
@@ -390,9 +412,15 @@ case "$1" in
         ;;
 esac
 
-
+RESULTS=()
 
 echo
+
+div='------------------------------'
+divider="$div$div$div$div"
+headdiv="=============================="
+headdivider="$headdiv$headdiv$headdiv$headdiv"
+format="%-60s %-60s %-1s\n"
 
 for i in ${storageclasses[@]}
 do
@@ -403,9 +431,11 @@ do
 
 		if [ $vsclen -gt 0 ]
 		then
-			echo "============================================================================================================="
-			echo "                   Snapshot testing for storageclass $i PVCs started"
-			echo "============================================================================================================="
+			printf "$headdivider\n"
+			printf "%-30s %-90s\n" "  " "Snapshot testing for storageclass $i PVCs started"
+			printf "$headdivider\n"
+			RESULTS["TESTED SC $i"]="YES"
+			RESIND+=("TESTED SC $i")
                 	export SCNAME=$i
                 	export PVCPREF="pvc-${i}"
 		
@@ -434,7 +464,12 @@ do
 	
                 	if [ $PVCPODCHK -eq 0 ] 
 			then	
-				echo "POD and PVC creation test PASSED"
+				echo "PVC creation test PASSED"
+				echo "POD creation test PASSED"
+				RESULTS["PVC creation for SC $i"]="PASSED"
+				RESIND+=("PVC creation for SC $i")
+				RESULTS["POD creation for SC $i"]="PASSED"
+				RESIND+=("POD creation for SC $i")
                        		VSCLASS=(`kubectl get volumesnapshotclass | grep -v 'NAME' | grep "${PROVISIONER[$i]}" | awk '{print $1}'`)
                			for j in ${VSCLASS[@]}
                 		do
@@ -449,8 +484,8 @@ do
 					printf "Retrying on Volumesnapshot $VSNAME status check with 5s retrial timeout  "
                         		chkVsStatus $VSNAME $NS $TTC
 					VSCHK=$?
-                        		[[ $VSCHK -eq 0 ]] && { echo "------------ Testing of volumesnapshot creation for VSC $j PASSED ------------"; echo; } || { echo "------------ Testing of volumesnapshot creation for VSC $j FAILED ------------"; echo; }
-					[[ $VSCHK -ne 0 && $clogs -eq 1 ]] && { kubectl describe volumesnapshot $VSNAME -n $NS | grep -A 10 'Events:'; }
+					[[ $VSCHK -eq 0 ]] && { RESULTS["volumesnapshot creation for VSC $j"]="PASSED"; RESIND+=("volumesnapshot creation for VSC $j"); echo "------------ Testing of volumesnapshot creation for VSC $j PASSED ------------"; echo; } || { RESULTS["volumesnapshot creation for VSC $j"]="FAILED"; RESIND+=("volumesnapshot creation for VSC $j"); echo " \"readyToUse\" flag of VSC $j didn't came to \"true\" even after max retries";echo "------------ Testing of volumesnapshot creation for VSC $j FAILED ------------"; echo; }
+					[[ $VSCHK -ne 0 ]] && { echo "Here are volumesnapshot Events:"; kubectl describe volumesnapshot $VSNAME -n $NS | grep -A 10 'Events:' | grep -v 'Events:'; }
                         		kubectl delete volumesnapshot $VSNAME -n $NS --grace-period=0 --force  > /dev/null 2>&1 & 
 					kubectl patch volumesnapshot $VSNAME --type json --patch='[{ "op": "remove", "path": "/metadata/finalizers"}]' -n $NS > /dev/null 2>&1 
 					sleep 5
@@ -462,10 +497,15 @@ do
 		        	PVCSTAT=`kubectl get pvc $PVCNAME -n $NS -o yaml | grep 'phase' | cut -f2 -d ":" | xargs`
 		        	PODSTAT=`kubectl get pod $PODNAME -n $NS -o yaml | grep 'phase' | cut -f2 -d ":" | xargs`
 
-				[[ $PODSTAT == 'Running' ]] && { echo "POD Check was PASSED"; } || { echo "POD Check was FALIED"; }
-				[[ $PODSTAT != 'Running' && $clogs -eq 1 ]] && { kubectl describe pod $PODNAME -n $NS | grep -A 10 'Events:'; }
-		        	[[ $PVCSTAT == 'Bound' ]] && { echo "PVC Check was PASSED"; } || { echo "PVC Check was FAILED"; }	
-				[[ $PVCSTAT != 'Bound' && $clogs -eq 1 ]] && { kubectl describe pvc $PVCNAME -n $NS | grep -A 10 'Events:'; }
+				[[ $PODSTAT == 'Running' ]] && { RESULTS["POD creation for SC $i"]="PASSED"; RESIND+=("POD creation for SC $i"); echo "POD Check was PASSED"; } || { RESULTS["POD creation for SC $i"]="FAILED"; RESIND+=("POD creation for SC $i"); echo "POD Check was FAILED as POD status didn't came to \"Running\" even after max retries"; }
+				[[ $PODSTAT != 'Running' ]] && { echo "Here are POD Events:"; kubectl describe pod $PODNAME -n $NS | grep -A 10 'Events:' | grep -v 'Events:'; }
+
+		        	[[ $PVCSTAT == 'Bound' ]] && { RESULTS["PVC creation for SC $i"]="PASSED"; RESIND+=("PVC creation for SC $i"); echo "PVC Check was PASSED"; } || { RESULTS["PVC creation for SC $i"]="FAILED"; RESIND+=("PVC creation for SC $i"); echo "PVC Check was FAILED as PVC status didn't came to \"Bound\" even after max retries"; }	
+				[[ $PVCSTAT != 'Bound' ]] && { echo "Here are PVC Events:"; kubectl describe pvc $PVCNAME -n $NS | grep -A 10 'Events:' | grep -v 'Events:'; }
+				
+				RESULTS["volumesnapshot creation test for SC $i"]="NOT PERFORMED"
+				RESIND+=("volumesnapshot creation test for SC $i")	
+				echo "No Volumesnapshot creation test will be performed for any Volumesnapshotclass of SC $i as one of PVC POD check was failed, skipping to next Storageclass"
 				echo
 				deldepl $NS > /dev/null 2>&1
 				kubectl delete pvc $PVCNAME -n $NS --grace-period=0 --force  > /dev/null 2>&1 &
@@ -474,14 +514,22 @@ do
 
 			verifycleanup $NS $TTC	
 		else
-			echo "No Volumesnapshotclass found for Storageclass $i, jumping to the next Storageclass"
+			echo "No Volumesnapshotclass found for Storageclass $i, skipping to the next Storageclass"
+			RESULTS["volumesnapshot creation test for SC $i"]="NOT PERFORMED"
+			RESIND+=("volumesnapshot creation test for SC $i")
 		fi
-            echo "============================================================================================================="
-            echo "                   Snapshot testing for storageclass $i PVCs completed"
-            echo "============================================================================================================="
+
+            printf "$headdivider\n"
+       	    printf "%-30s %-90s\n" "  " "Snapshot testing for storageclass $i PVCs COMPLETED"
+            printf "$headdivider\n"
+	
 	    echo
         fi
 done
 
 decommission $NS 1
 
+echo
+echo
+
+resultsummary 
