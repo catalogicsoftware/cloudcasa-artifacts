@@ -4,7 +4,7 @@
 
 #!/usr/bin/env bash
 
-SCRIPT_VERSION=0.45
+SCRIPT_VERSION=0.45.1
 echo "Version: $SCRIPT_VERSION"
 
 # Initialize all the associative array variables with global scope
@@ -87,7 +87,13 @@ prompt_user()
     echo "After the test, the script will delete all the resources it created for the test. "
 	echo
 	printf "Press y/yes to Continue and n/no to exit: "
-	read CHOICE
+
+    # Without explicitly reading from terminal, we cannot pipe the script to "bash" as follows:
+    #   $ curl https://raw.githubusercontent.com/catalogicsoftware/cloudcasa-artifacts/master/scripts/cc-validate-storage.sh | bash -
+    # Without "</dev/tty", "read" will read from STDIN and will not give chance to user to answer
+    # the prompt.
+	read CHOICE < /dev/tty
+
 	case $CHOICE in
 		'Y' | 'YES' | 'y' | 'yes')
 			echo "Continuing ...";	
