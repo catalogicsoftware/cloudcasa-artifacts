@@ -1,8 +1,11 @@
-#!/usr/bin/env bash
-
 ###############################################
 # Copyright 2022 Catalogic Software Inc.   ####
 ###############################################
+
+#!/usr/bin/env bash
+
+SCRIPT_VERSION=0.45
+echo "Version: $SCRIPT_VERSION"
 
 # Initialize all the associative array variables with global scope
 declare -A PROVISIONER
@@ -12,8 +15,17 @@ declare -a csidrivers
 declare -a storageclasses
 declare -a CRDS
 
-VALID_ARGS=$(getopt -o hc --long help,collectlogs -- "$@")
-eval set -- "$VALID_ARGS"
+export NS='csi-setup-test'
+export PD=`pwd`
+retries=$TTC
+div='------------------------------'
+divider="$div$div$div$div"
+headdiv="=============================="
+headdivider="$headdiv$headdiv$headdiv$headdiv"
+width=60
+TTC=20
+CRDS=("volumesnapshotclasses.snapshot.storage.k8s.io:apiextensions.k8s.io/v1" "volumesnapshotcontents.snapshot.storage.k8s.io:apiextensions.k8s.io/v1" "volumesnapshots.snapshot.storage.k8s.io:apiextensions.k8s.io/v1")
+KUBEPATH=
 
 help_()
 {
@@ -24,45 +36,75 @@ echo "	Run the script to validate CSI storage class configuration is working fin
 echo "OPTIONS"
 echo "	-h, --help"
 echo "		For usage info"
-echo "	-c, --collectlogs"
-echo "		For more Detailed output incase of any failures"
+echo "	-c, --cleanup"
+echo "		For cleanup the test namespace"
+echo "  -C, --collectlogs"
+echo "          For Describing the resources at any instant, mostly used when another instance of the script is running or hung, this option exits the script after describing the resources"
 echo "EXAMPLES"
 echo "	./cc-validate-storage.sh"
 echo "	./cc-validate-storage.sh  -h"
 echo "	./cc-validate-storage.sh  --help"
-echo "	./cc-validate-storage.sh  -c"
+echo "	./cc-validate-storage.sh  -C"
 echo "	./cc-validate-storage.sh  --collectlogs"
+echo
+echo
 exit 0
 }
 
 
-case "$1" in
-    -h | --help)
-        help_;
-        ;;
-    -c | --collectlogs)
-        clogs=1;
-        ;;
-     *)
-	clogs=0;
-        ;;
-esac
-
-
-div='------------------------------'
-divider="$div$div$div$div"
-headdiv="=============================="
-headdivider="$headdiv$headdiv$headdiv$headdiv"
-width=60
-TTC=20
-CRDS=("volumesnapshotclasses.snapshot.storage.k8s.io:apiextensions.k8s.io/v1" "volumesnapshotcontents.snapshot.storage.k8s.io:apiextensions.k8s.io/v1" "volumesnapshots.snapshot.storage.k8s.io:apiextensions.k8s.io/v1")
-
-
-
-# echo "HOME:$HOME"
 PATH_TO_YAML_FILES=$HOME/tmp/test_dir
-SCRIPT_VERSION=0.42
-echo "Version: $SCRIPT_VERSION"
+
+initial_check()
+{
+	printf "$headdivider\n"
+	SUPPMAJORV=1
+	SUPPMINORV=20
+        KUBEPATH=`which kubectl`
+        [[ -z $KUBEPATH ]] && { echo 'kubectl not found in the env, Please update you PATH variable with kubectl binary'; exit 1; }
+        KVMAJOR=`kubectl version -o yaml 2> /dev/null | grep 'major' | tail -1 | cut -d ':' -f2 | xargs`
+        KVMINOR=`kubectl version -o yaml 2> /dev/null | grep 'minor' | tail -1 | cut -d ':' -f2 | xargs`
+	[[ $KVMAJOR -ge $SUPPMAJORV && $KVMINOR -ge $KVMINOR ]] || { echo >&2 "WARNING: Please upgrade your K8S cluster version to >= $SUPPMAJORV.$SUPPMINORV"; }
+        echo "Your Cluster is running on K8S Version: $KVMAJOR.$KVMINOR"
+        echo "KUBECTL PATH: $KUBEPATH"
+	echo "KUBECONFIG: $KUBECONFIG"
+	printf "$headdivider\n"
+	echo
+	echo
+}
+initial_check
+
+prompt_user()
+{
+	printf "$headdivider\n"
+	echo "The Script will perform the following actions in your cluster:"
+	echo "  - Check the available csidrivers installed."
+	echo "  - Find the storage classes and their provisioners."
+	echo "  - Find stoage classes whose provisioners can be mapped to CSI drivers and volume snapshot classes."
+	echo "  - For each such storage class: "
+	echo "    - 1. Create a PVC and POD in csi-setup-test namespace."
+	echo "    - 2. Create a volumesnapshots with all available volumesnapshotclasses for the storage class."
+    echo
+    echo "After the test, the script will delete all the resources it created for the test. "
+	echo
+	printf "Press y/yes to Continue and n/no to exit: "
+	read CHOICE
+	case $CHOICE in
+		'Y' | 'YES' | 'y' | 'yes')
+			echo "Continuing ...";	
+			;;
+		'N' | 'NO' | 'n' | 'no')
+			echo "Exiting ...";
+			printf "$headdivider\n"
+			exit 0;
+			;;
+		*)
+			echo "Not a valid input, you could choose any of 'Y','y','YES','yes','N','n','NO','no', Exiting ..."
+			printf "$headdivider\n"
+			exit 1;
+			;;
+	esac
+	printf "$headdivider\n"
+}
 
 chkAllCrdsExists()
 {
@@ -144,7 +186,6 @@ setProvisionerForSC()
 
 	for i in ${storageclasses[@]}
 	do
-        	kubectl describe storageclass $i > /dev/null 2>&1 ; 
 		PROVISIONER[$i]=`kubectl describe storageclass $i | grep 'Provisioner' | cut -f2 -d ':' | xargs`
 		[[ ${IF_CSI_DRIVER[${PROVISIONER[$i]}]} -eq 1 ]] || IF_CSI_DRIVER[${PROVISIONER[$i]}]=0
  		printf "$format" "|  $i" "|  ${PROVISIONER[$i]}" "|"
@@ -256,8 +297,7 @@ decommission()
 	PVCS=`kubectl get pvc -n $NS 2> /dev/null | grep -v 'NAME' | wc -l`
 	VSCS=`kubectl get volumesnapshotcontent | grep $NS | awk '{print $1}' | wc -l`
 
-	echo "Deleting namespace $NS, pods=$PODS, volumesnapshots=$VSS, volumesnapshotcontents=$VSCS, pvcs=$PVCS"
-
+	echo "Decommisioning namespace $NS with residue pods=$PODS, volumesnapshots=$VSS, volumesnapshotcontents=$VSCS ,pvcs=$PVCS"
 	[[ $PODS -gt 0 ]] && { deldepl $1; }
 	[[ $VSS -gt 0 ]] && { delvs $1; } 
 	[[ $PVCS -gt 0 ]] && { delpvc $1; }
@@ -319,6 +359,7 @@ spec:
     matchLabels:
       app: busybox
       tier: busybox
+      cloudcasa.io/csi-verify-script: "true"
   strategy:
     type: Recreate
   template:
@@ -326,6 +367,7 @@ spec:
       labels:
         app: busybox
         tier: busybox
+        cloudcasa.io/csi-verify-script: "true"
     spec:
       containers:
       - image: busybox
@@ -377,10 +419,52 @@ resultsummary()
 	done		
 }
 
-export NS='csi-setup-test'
-export PD=`pwd`
-retries=$TTC
+getinfo()
+{
+	PODS=(`kubectl get pods -n $NS -l cloudcasa.io/csi-verify-script=true 2> /dev/null | grep -v 'NAME' | awk '{print $1}' | tr '\n' ' '`)
+	VSS=(`kubectl get volumesnapshot -n $NS -l cloudcasa.io/csi-verify-script=true 2> /dev/null | grep -v 'NAME' | awk '{print $1}' | tr '\n' ' '`)
+	VSCS=(`kubectl get volumesnapshotcontent | grep '$NS' | awk '{print $1}' | tr '\n' ' '`)
+	PVCS=(`kubectl get pvc -n $NS -l cloudcasa.io/csi-verify-script=true 2> /dev/null | grep -v 'NAME' | awk '{print $1}' | tr '\n' ' '`)
+	
+	[[ ${#PODS[@]} -eq 0 && ${#VSS[@]} -eq 0 && ${#VSCS[@]} -eq 0 && ${#PVCS[@]} -eq 0 ]] && { echo "==========================================================="; echo "No resources in the namespace $NS, Exiting ..."; echo "==========================================================="; exit 0; }
 
+	[[ ${#PODS[@]} -gt 0 ]] && { printf "PODs: ${#PODS[@]} "; }
+	[[ ${#VSS[@]} -gt 0 ]] && { printf "Volumesnapshot: ${#VSS[@]} "; }
+        [[ ${#VSCS[@]} -gt 0 ]] && { printf "Volumesnapshotcontents: ${#VSCS[@]} "; }
+	[[ ${#PVCS[@]} -gt 0 ]] && { printf "Persistantvolumes: ${#PVCS[@]}";}
+	
+	echo; 
+
+	[[ ${#PODS[@]} -gt 0 ]] && { echo "==========================================================================================="; echo "======================= Describing PODs in namespace $NS =======================" ; echo "==========================================================================================="; for pd in ${PODS[@]}; do kubectl describe pod $pd -n $NS; echo "===========================================================================================";	done; 	echo ;	echo; }
+	[[ ${#PVCS[@]} -gt 0 ]] && { echo "==========================================================================================="; echo "======================= Describing PVCs in namespace $NS ======================="; echo "==========================================================================================="; for p in ${PVCS[@]}; do kubectl describe pvc $p -n $NS; echo "==========================================================================================="; done;  echo ; echo ; }
+        [[ ${#VSS[@]} -gt 0 ]] && { echo "======================================================================================================"; echo "======================= Describing volumesnapshots in namespace $NS ======================="; echo "======================================================================================================"; for v in ${VSS[@]}; do kubectl describe volumesnapshots $v -n $NS; echo "======================================================================================================"; done; echo; echo;}
+        [[ ${#VSCS[@]} -gt 0 ]] && { echo "============================================================================================================"; echo "======================= Describing volumesnapshotcontent in namespace $NS ======================="; echo "============================================================================================================"; for vs in ${VSCS[@]}; do kubectl describe volumesnapshotcontent $vs -n $NS; echo "============================================================================================================"; done; echo; echo; } 
+	
+}
+
+VALID_ARGS=$(getopt -o hCc --long help,collectlogs,cleanup -- "$@")
+eval set -- "$VALID_ARGS"
+
+
+case "$1" in
+    -h | --help)
+        help_;
+        ;;
+    -c | --cleanup)
+        echo "Processing cleanup"
+	decommission $NS 1
+        verifycleanup $NS $TTC
+        exit 0;
+        ;;
+    -C | --collectlogs)
+        getinfo;
+	exit 0;
+	;;
+     *)
+        ;;
+esac
+
+prompt_user
 chkAllCrdsExists
 getCsiDrivers
 setCsiDrivers
@@ -390,27 +474,8 @@ setProvisionerForSC
 chkAndDelCsiSetupTestNamespace $NS
 
 
-VALID_ARGS=$(getopt -o hc --long help,collectlogs -- "$@")
-eval set -- "$VALID_ARGS"
-
-help_()
-{
-echo "help"
-exit 0
-}
 
 
-case "$1" in
-    -h | --help)
-	help_;
-        ;;
-    -c | --collectlogs)
-        echo "Processing 'collectlogs' option"
-	c=1
-        ;;
-     *)
-        ;;
-esac
 
 RESULTS=()
 
@@ -422,13 +487,16 @@ headdiv="=============================="
 headdivider="$headdiv$headdiv$headdiv$headdiv"
 format="%-60s %-60s %-1s\n"
 
+CSISC=0
+
 for i in ${storageclasses[@]}
 do
         if [[ ${IF_CSI_DRIVER[${PROVISIONER[$i]}]} -eq 1 ]]; then
                 echo
-                VSCLASS=(`kubectl get volumesnapshotclass | grep -v 'NAME' | grep "${PROVISIONER[$i]}" | awk '{print $1}'`)
+                CSISC=1
+		VSCLASS=(`kubectl get volumesnapshotclass | grep -v 'NAME' | grep "${PROVISIONER[$i]}" | awk '{print $1}'`)
 		vsclen=${#VSCLASS[@]}
-
+		
 		if [ $vsclen -gt 0 ]
 		then
 			printf "$headdivider\n"
@@ -526,6 +594,8 @@ do
 	    echo
         fi
 done
+
+[[ $CSISC -eq 0 ]] && { echo "Could not find storage classes whose provisioners have corresponding CSI drivers. Exiting ..."; exit 0; }
 
 decommission $NS 1
 
