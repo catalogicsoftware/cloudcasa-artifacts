@@ -4,7 +4,7 @@
 
 #!/usr/bin/env bash
 
-SCRIPT_VERSION=0.45
+SCRIPT_VERSION=0.47
 echo "Version: $SCRIPT_VERSION"
 
 # Initialize all the associative array variables with global scope
@@ -53,6 +53,7 @@ exit 0
 
 
 PATH_TO_YAML_FILES=$HOME/tmp/test_dir
+echo "" > $PATH_TO_YAML_FILES/cc-validate-storage.debug.txt
 
 initial_check()
 {
@@ -61,8 +62,8 @@ initial_check()
 	SUPPMINORV=20
         KUBEPATH=`which kubectl`
         [[ -z $KUBEPATH ]] && { echo 'kubectl not found in the env, Please update you PATH variable with kubectl binary'; exit 1; }
-        KVMAJOR=`kubectl version -o yaml 2> /dev/null | grep 'major' | tail -1 | cut -d ':' -f2 | xargs`
-        KVMINOR=`kubectl version -o yaml 2> /dev/null | grep 'minor' | tail -1 | cut -d ':' -f2 | xargs`
+        KVMAJOR=`kubectl version -o yaml 2> /dev/null | grep 'major' | tail -1 | cut -d ':' -f2 | xargs | cut -d '+' -f1`
+        KVMINOR=`kubectl version -o yaml 2> /dev/null | grep 'minor' | tail -1 | cut -d ':' -f2 | xargs | cut -d '+' -f1`
 	[[ $KVMAJOR -ge $SUPPMAJORV && $KVMINOR -ge $KVMINOR ]] || { echo >&2 "WARNING: Please upgrade your K8S cluster version to >= $SUPPMAJORV.$SUPPMINORV"; }
         echo "Your Cluster is running on K8S Version: $KVMAJOR.$KVMINOR"
         echo "KUBECTL PATH: $KUBEPATH"
@@ -186,6 +187,7 @@ setProvisionerForSC()
 
 	for i in ${storageclasses[@]}
 	do
+		echo "Describing the SC $i" >> $PATH_TO_YAML_FILES/cc-validate-storage.debug.txt ; kubectl describe storageclass $i >> $PATH_TO_YAML_FILES/cc-validate-storage.debug.txt
 		PROVISIONER[$i]=`kubectl describe storageclass $i | grep 'Provisioner' | cut -f2 -d ':' | xargs`
 		[[ ${IF_CSI_DRIVER[${PROVISIONER[$i]}]} -eq 1 ]] || IF_CSI_DRIVER[${PROVISIONER[$i]}]=0
  		printf "$format" "|  $i" "|  ${PROVISIONER[$i]}" "|"
@@ -195,6 +197,7 @@ setProvisionerForSC()
 
 chknamespacestate()
 {
+	echo "Describing the namespace resource" >> $PATH_TO_YAML_FILES/cc-validate-storage.debug.txt ; kubectl describe namespace $1 >> $PATH_TO_YAML_FILES/cc-validate-storage.debug.txt
 	nsstate=`kubectl describe namespace $1 | grep 'Status:' | cut -f2 -d ':' | xargs`
 	[[ $nsstate == 'Active' ]] && { echo >&2 "$1 Namespace is Active"; return 0; } || { echo >&2 "The Namespace had some failures"; return 1; }
 }
@@ -204,7 +207,7 @@ chkAndDelCsiSetupTestNamespace()
 
 	state=`kubectl get namespaces | grep csi-setup-test | wc -l`
 	[[ $state -gt 0 ]] && { echo "Found namespace csi-setup-test :( Deleting ..."; decommission $1 1; }
-	[[ -d ~/tmp/test_dir ]] && { rm -rf ~/tmp/test_dir/ > /dev/null 2>&1 ; }
+	[[ -d ~/tmp/test_dir ]] && { rm -rf ~/tmp/test_dir/*.yaml > /dev/null 2>&1 ; }
 }
 
 
@@ -500,7 +503,7 @@ do
 		if [ $vsclen -gt 0 ]
 		then
 			printf "$headdivider\n"
-			printf "%-30s %-90s\n" "  " "Snapshot testing for storageclass $i PVCs started"
+			printf "%-30s %-90s\n" "  " "Snapshot testing for storageclass $i PVCs started."
 			printf "$headdivider\n"
 			RESULTS["TESTED SC $i"]="YES"
 			RESIND+=("TESTED SC $i")
@@ -542,7 +545,8 @@ do
                			for j in ${VSCLASS[@]}
                 		do
 					echo "------------ Testing volumesnapshot creation for VSC $j ------------"
-					
+					echo "Describing volumesnapshotclass $j" >> $PATH_TO_YAML_FILES/cc-validate-storage.debug.txt 
+				        kubectl describe volumesnapshotclass $j >> $PATH_TO_YAML_FILES/cc-validate-storage.debug.txt 	
                         		export VSCAPI=`kubectl describe volumesnapshotclass $j | grep 'API Version' | head -1 | cut -f2 -d ':' | xargs`
                         		export VSCNAME=$j
                         		export VSPREF="snap-${j}"
@@ -553,7 +557,7 @@ do
                         		chkVsStatus $VSNAME $NS $TTC
 					VSCHK=$?
 					[[ $VSCHK -eq 0 ]] && { RESULTS["volumesnapshot creation for VSC $j"]="PASSED"; RESIND+=("volumesnapshot creation for VSC $j"); echo "------------ Testing of volumesnapshot creation for VSC $j PASSED ------------"; echo; } || { RESULTS["volumesnapshot creation for VSC $j"]="FAILED"; RESIND+=("volumesnapshot creation for VSC $j"); echo " \"readyToUse\" flag of VSC $j didn't came to \"true\" even after max retries";echo "------------ Testing of volumesnapshot creation for VSC $j FAILED ------------"; echo; }
-					[[ $VSCHK -ne 0 ]] && { echo "Here are volumesnapshot Events:"; kubectl describe volumesnapshot $VSNAME -n $NS | grep -A 10 'Events:' | grep -v 'Events:'; }
+					[[ $VSCHK -ne 0 ]] && { echo "Here are volumesnapshot Events:"; echo "Describing the volumesnapshot for $j" >> $PATH_TO_YAML_FILES/cc-validate-storage.debug.txt ;kubectl describe volumesnapshot $VSNAME -n $NS >> $PATH_TO_YAML_FILES/cc-validate-storage.debug.txt ;  kubectl describe volumesnapshot $VSNAME -n $NS | grep -A 10 'Events:' | grep -v 'Events:'; }
                         		kubectl delete volumesnapshot $VSNAME -n $NS --grace-period=0 --force  > /dev/null 2>&1 & 
 					kubectl patch volumesnapshot $VSNAME --type json --patch='[{ "op": "remove", "path": "/metadata/finalizers"}]' -n $NS > /dev/null 2>&1 
 					sleep 5
@@ -566,10 +570,10 @@ do
 		        	PODSTAT=`kubectl get pod $PODNAME -n $NS -o yaml | grep 'phase' | cut -f2 -d ":" | xargs`
 
 				[[ $PODSTAT == 'Running' ]] && { RESULTS["POD creation for SC $i"]="PASSED"; RESIND+=("POD creation for SC $i"); echo "POD Check was PASSED"; } || { RESULTS["POD creation for SC $i"]="FAILED"; RESIND+=("POD creation for SC $i"); echo "POD Check was FAILED as POD status didn't came to \"Running\" even after max retries"; }
-				[[ $PODSTAT != 'Running' ]] && { echo "Here are POD Events:"; kubectl describe pod $PODNAME -n $NS | grep -A 10 'Events:' | grep -v 'Events:'; }
+				[[ $PODSTAT != 'Running' ]] && { echo "Here are POD Events:"; echo "Describing the pod $PODNAME" >>  $PATH_TO_YAML_FILES/cc-validate-storage.debug.txt ;  kubectl describe pod $PODNAME -n $NS >> $PATH_TO_YAML_FILES/cc-validate-storage.debug.txt; kubectl describe pod $PODNAME -n $NS | grep -A 10 'Events:' | grep -v 'Events:'; }
 
 		        	[[ $PVCSTAT == 'Bound' ]] && { RESULTS["PVC creation for SC $i"]="PASSED"; RESIND+=("PVC creation for SC $i"); echo "PVC Check was PASSED"; } || { RESULTS["PVC creation for SC $i"]="FAILED"; RESIND+=("PVC creation for SC $i"); echo "PVC Check was FAILED as PVC status didn't came to \"Bound\" even after max retries"; }	
-				[[ $PVCSTAT != 'Bound' ]] && { echo "Here are PVC Events:"; kubectl describe pvc $PVCNAME -n $NS | grep -A 10 'Events:' | grep -v 'Events:'; }
+				[[ $PVCSTAT != 'Bound' ]] && { echo "Here are PVC Events:"; echo "Describing the PVC $PVCNAME" >> $PATH_TO_YAML_FILES/cc-validate-storage.debug.txt; kubectl describe pvc $PVCNAME -n $NS >> $PATH_TO_YAML_FILES/cc-validate-storage.debug.txt; kubectl describe pvc $PVCNAME -n $NS | grep -A 10 'Events:' | grep -v 'Events:'; }
 				
 				RESULTS["volumesnapshot creation test for SC $i"]="NOT PERFORMED"
 				RESIND+=("volumesnapshot creation test for SC $i")	
@@ -588,7 +592,7 @@ do
 		fi
 
             printf "$headdivider\n"
-       	    printf "%-30s %-90s\n" "  " "Snapshot testing for storageclass $i PVCs COMPLETED"
+       	    printf "%-30s %-90s\n" "  " "Snapshot testing for storageclass $i PVCs COMPLETED."
             printf "$headdivider\n"
 	
 	    echo
@@ -603,3 +607,4 @@ echo
 echo
 
 resultsummary 
+echo "Check the file \"$PATH_TO_YAML_FILES/cc-validate-storage.debug.txt\", For more info."
