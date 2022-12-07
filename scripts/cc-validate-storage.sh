@@ -4,7 +4,7 @@
 
 #!/usr/bin/env bash
 
-SCRIPT_VERSION=0.49
+SCRIPT_VERSION=0.52
 echo "Version: $SCRIPT_VERSION"
 
 # Initialize all the associative array variables with global scope
@@ -84,7 +84,7 @@ prompt_user()
 	echo "  - Find stoage classes whose provisioners can be mapped to CSI drivers and volume snapshot classes."
 	echo "  - For each such storage class: "
 	echo "    - 1. Create a PVC and POD in csi-setup-test namespace."
-	echo "    - 2. Create a volumesnapshots with all available volumesnapshotclasses for the storage class."
+	echo "    - 2. Create a snapshot with all available volumesnapshotclasses for the storage class."
     echo
     echo "After the test, the script will delete all the resources it created for the test. "
 	echo
@@ -220,8 +220,11 @@ chkAndDelCsiSetupTestNamespace()
 
 chkPvcPodStatus()
 {
-        PVCSTATUS=`kubectl get pvc $1 -n $3 -o yaml | grep 'phase' | cut -f2 -d ":" | xargs`
-	PODSTATUS=`kubectl get pod $2 -n $3 -o yaml | grep 'phase' | cut -f2 -d ":" | xargs`
+	echo 'yaml content for pod and pvc' >> $PATH_TO_YAML_FILES/cc-validate-storage.debug.txt ;
+	kubectl get pvc $1 -n $3 -o yaml | grep -v 'f:phase:' | grep 'phase'  >> $PATH_TO_YAML_FILES/cc-validate-storage.debug.txt;
+	kubectl get pod $2 -n $3 -o yaml | grep -v 'f:phase:' | grep 'phase'  >> $PATH_TO_YAML_FILES/cc-validate-storage.debug.txt;
+        PVCSTATUS=`kubectl get pvc $1 -n $3 -o yaml | grep -v 'f:phase:' | grep 'phase' | cut -f2 -d ":" | xargs`
+	PODSTATUS=`kubectl get pod $2 -n $3 -o yaml | grep -v 'f:phase:' | grep 'phase' | cut -f2 -d ":" | xargs`
 	PVCPODSTATUS=$PVCSTATUS$PODSTATUS
         retryleft=$4
         case $PVCPODSTATUS in
@@ -239,7 +242,9 @@ chkPvcPodStatus()
 
 chkVsStatus()
 {
-        VSTATUS=`kubectl get volumesnapshot $1 -n $2 -o yaml | grep 'readyToUse' | cut -f2 -d ':' | xargs`
+	echo 'yaml content of volumesnapshot' >> $PATH_TO_YAML_FILES/cc-validate-storage.debug.txt ;
+	kubectl get volumesnapshot $1 -n $2 -o yaml | grep -v 'f:readyToUse:' | grep 'readyToUse' >> $PATH_TO_YAML_FILES/cc-validate-storage.debug.txt;
+        VSTATUS=`kubectl get volumesnapshot $1 -n $2 -o yaml | grep -v 'f:readyToUse:' | grep 'readyToUse' | cut -f2 -d ':' | xargs`
 	retryleft=$3
 	case $VSTATUS in
                 'true')
@@ -307,7 +312,8 @@ decommission()
 	PVCS=`kubectl get pvc -n $NS 2> /dev/null | grep -v 'NAME' | wc -l`
 	VSCS=`kubectl get volumesnapshotcontent | grep $NS | awk '{print $1}' | wc -l`
 
-	echo "Decommisioning namespace $NS with residue pods=$PODS, volumesnapshots=$VSS, volumesnapshotcontents=$VSCS ,pvcs=$PVCS"
+    echo "Deleting namespace $NS, pods=$PODS, volumesnapshots=$VSS, volumesnapshotcontents=$VSCS, pvcs=$PVCS"
+
 	[[ $PODS -gt 0 ]] && { deldepl $1; }
 	[[ $VSS -gt 0 ]] && { delvs $1; } 
 	[[ $PVCS -gt 0 ]] && { delpvc $1; }
@@ -589,8 +595,8 @@ do
                        		kubectl delete pvc $PVCNAME -n $NS --grace-period=0 --force  > /dev/null 2>&1 &
                        		kubectl patch pvc $PVCNAME --type json --patch='[{ "op": "remove", "path": "/metadata/finalizers"}]' -n $NS  > /dev/null 2>&1
 			else	
-		        	PVCSTAT=`kubectl get pvc $PVCNAME -n $NS -o yaml | grep 'phase' | cut -f2 -d ":" | xargs`
-		        	PODSTAT=`kubectl get pod $PODNAME -n $NS -o yaml | grep 'phase' | cut -f2 -d ":" | xargs`
+		        	PVCSTAT=`kubectl get pvc $PVCNAME -n $NS -o yaml | grep -v 'f:phase:' | grep 'phase:' | cut -f2 -d ":" | xargs`
+		        	PODSTAT=`kubectl get pod $PODNAME -n $NS -o yaml | grep -v 'f:phase:' | grep 'phase:' | cut -f2 -d ":" | xargs`
 
 				[[ $PODSTAT == 'Running' ]] && { RESULTS["POD creation for SC $i"]="PASSED"; RESIND+=("POD creation for SC $i"); echo "POD Check was PASSED"; } || { RESULTS["POD creation for SC $i"]="FAILED"; RESIND+=("POD creation for SC $i"); echo "POD Check was FAILED as POD status didn't came to \"Running\" even after max retries"; }
 				[[ $PODSTAT != 'Running' ]] && { echo "Here are POD Events:"; echo "Describing the pod $PODNAME" >>  $PATH_TO_YAML_FILES/cc-validate-storage.debug.txt ;  kubectl describe pod $PODNAME -n $NS >> $PATH_TO_YAML_FILES/cc-validate-storage.debug.txt; kubectl describe pod $PODNAME -n $NS | grep -A 10 'Events:' | grep -v 'Events:'; }
