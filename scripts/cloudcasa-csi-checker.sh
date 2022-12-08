@@ -4,7 +4,7 @@
 
 #!/usr/bin/env bash
 
-SCRIPT_VERSION=0.52
+SCRIPT_VERSION=0.54
 echo "Version: $SCRIPT_VERSION"
 
 # Initialize all the associative array variables with global scope
@@ -25,14 +25,20 @@ headdivider="$headdiv$headdiv$headdiv$headdiv"
 width=60
 TTC=20
 CRDS=("volumesnapshotclasses.snapshot.storage.k8s.io:apiextensions.k8s.io/v1" "volumesnapshotcontents.snapshot.storage.k8s.io:apiextensions.k8s.io/v1" "volumesnapshots.snapshot.storage.k8s.io:apiextensions.k8s.io/v1")
+echo "Env:"
+echo "CC_CSI_CHECK_BUSYBOX_IMAGE=$CC_CSI_CHECK_BUSYBOX_IMAGE"
+[ -z $CC_CSI_CHECK_BUSYBOX_IMAGE ] && { IMAGE='busybox'; } || { IMAGE=$CC_CSI_CHECK_BUSYBOX_IMAGE; }
 KUBEPATH=
+
 
 help_()
 {
 echo "SYNOPSIS"
 echo "	cc-validate-storage.sh  [ Options ]"
 echo "DESCRIPTION"
-echo "	Run the script to validate CSI storage class configuration is working fine"
+echo "	Run the script to validate CSI storage class configuration is working fine."
+echo "	The script creates Pods using busybox image from Dockerhub.If your cluster cannot access Dockerhub, please copy the image <IMAGE> to a locally accessible registry and set the environment variable"
+echo "	CC_CSI_CHECK_BUSYBOX_IMAGE to the <image name> with proper tags"
 echo "OPTIONS"
 echo "	-h, --help"
 echo "		For usage info"
@@ -40,6 +46,9 @@ echo "	-c, --cleanup"
 echo "		For cleanup the test namespace"
 echo "  -C, --collectlogs"
 echo "          For Describing the resources at any instant, mostly used when another instance of the script is running or hung, this option exits the script after describing the resources"
+echo "	-i, --image"
+echo "		For specifying a custom busybox image explicitly, This option is useful when public busybox image is not accessible and you have a busybox image with other tag in your private registry."
+echo "		User need to login to his private registry and make sure. The argument provided in this flag will overwrite the env variable CC_CSI_CHECK_BUSYBOX_IMAGE."
 echo "EXAMPLES"
 echo "	./cc-validate-storage.sh"
 echo "	./cc-validate-storage.sh  -h"
@@ -81,13 +90,18 @@ prompt_user()
 	echo "The Script will perform the following actions in your cluster:"
 	echo "  - Check the available csidrivers installed."
 	echo "  - Find the storage classes and their provisioners."
-	echo "  - Find stoage classes whose provisioners can be mapped to CSI drivers and volume snapshot classes."
+	echo "  - Find storage classes whose provisioners can be mapped to CSI drivers and volume snapshot classes."
 	echo "  - For each such storage class: "
 	echo "    - 1. Create a PVC and POD in csi-setup-test namespace."
 	echo "    - 2. Create a snapshot with all available volumesnapshotclasses for the storage class."
     echo
     echo "After the test, the script will delete all the resources it created for the test. "
 	echo
+    echo "The script uses busybox image from Dockerhub to create pods. If the cluster cannot access"
+    echo "Dockerhub, copy the busybox image to a locally accessible registry and set the env variable"
+    echo "CC_CSI_CHECK_BUSYBOX_IMAGE to the local image."
+	echo
+
 	printf "Press y/yes to Continue and n/no to exit: "
 
     # Without explicitly reading from terminal, we cannot pipe the script to "bash" as follows:
@@ -386,7 +400,7 @@ spec:
         cloudcasa.io/csi-verify-script: "true"
     spec:
       containers:
-      - image: busybox
+      - image: ${IMAGE}
         name: busybox
         command:
           - sleep
@@ -473,7 +487,7 @@ handleIfLonghorn()
 	fi
 }
 
-VALID_ARGS=$(getopt -o hCc --long help,collectlogs,cleanup -- "$@")
+VALID_ARGS=$(getopt -o hCci: --long help,collectlogs,cleanup,image: -- "$@")
 eval set -- "$VALID_ARGS"
 
 
@@ -490,6 +504,9 @@ case "$1" in
     -C | --collectlogs)
         getinfo;
 	exit 0;
+	;;
+    -i | --image)
+	IMAGE=$2
 	;;
      *)
         ;;
