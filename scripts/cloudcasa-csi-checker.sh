@@ -4,7 +4,7 @@
 
 #!/usr/bin/env bash
 
-SCRIPT_VERSION=0.54
+SCRIPT_VERSION=0.55
 echo "Version: $SCRIPT_VERSION"
 
 # Initialize all the associative array variables with global scope
@@ -36,19 +36,19 @@ help_()
 echo "SYNOPSIS"
 echo "	cc-validate-storage.sh  [ Options ]"
 echo "DESCRIPTION"
-echo "	Run the script to validate CSI storage class configuration is working fine."
-echo "	The script creates Pods using busybox image from Dockerhub.If your cluster cannot access Dockerhub, please copy the image <IMAGE> to a locally accessible registry and set the environment variable"
-echo "	CC_CSI_CHECK_BUSYBOX_IMAGE to the <image name> with proper tags"
+echo "	Script to verify CSI storage class configuration is correct."
+echo "	The script creates Pods using busybox image from Dockerhub. If your cluster cannot access Dockerhub, please copy the image <IMAGE> to a locally accessible registry and set the environment variable"
+echo "	CC_CSI_CHECK_BUSYBOX_IMAGE to the <image name> with proper tags."
 echo "OPTIONS"
 echo "	-h, --help"
 echo "		For usage info"
 echo "	-c, --cleanup"
-echo "		For cleanup the test namespace"
+echo "		Only clean up the test namespace. This is normally done automatically before exiting."
 echo "  -C, --collectlogs"
-echo "          For Describing the resources at any instant, mostly used when another instance of the script is running or hung, this option exits the script after describing the resources"
+echo "      For Describing the resources at any instant. Mostly used when another instance of the script is running or hung. This option exits the script after describing the resources."
 echo "	-i, --image"
 echo "		For specifying a custom busybox image explicitly, This option is useful when public busybox image is not accessible and you have a busybox image with other tag in your private registry."
-echo "		User need to login to his private registry and make sure. The argument provided in this flag will overwrite the env variable CC_CSI_CHECK_BUSYBOX_IMAGE."
+echo "		User needs to login to the private registry and verify. The argument provided in this flag will overwrite the env variable CC_CSI_CHECK_BUSYBOX_IMAGE."
 echo "EXAMPLES"
 echo "	./cc-validate-storage.sh"
 echo "	./cc-validate-storage.sh  -h"
@@ -71,11 +71,11 @@ initial_check()
 	SUPPMAJORV=1
 	SUPPMINORV=20
         KUBEPATH=`which kubectl`
-        [[ -z $KUBEPATH ]] && { echo 'kubectl not found in the env, Please update you PATH variable with kubectl binary'; exit 1; }
+        [[ -z $KUBEPATH ]] && { echo 'The kubectl binary was not found. Please update you PATH variable with the location of kubectl.'; exit 1; }
         KVMAJOR=`kubectl version -o yaml 2> /dev/null | grep 'major' | tail -1 | cut -d ':' -f2 | xargs | cut -d '+' -f1`
         KVMINOR=`kubectl version -o yaml 2> /dev/null | grep 'minor' | tail -1 | cut -d ':' -f2 | xargs | cut -d '+' -f1`
 	[[ $KVMAJOR -ge $SUPPMAJORV && $KVMINOR -ge $KVMINOR ]] || { echo >&2 "WARNING: Please upgrade your K8S cluster version to >= $SUPPMAJORV.$SUPPMINORV"; }
-        echo "Your Cluster is running on K8S Version: $KVMAJOR.$KVMINOR"
+        echo "Your Cluster is running on Kubernetes version: $KVMAJOR.$KVMINOR"
         echo "KUBECTL PATH: $KUBEPATH"
 	echo "KUBECONFIG: $KUBECONFIG"
 	printf "$headdivider\n"
@@ -97,7 +97,7 @@ prompt_user()
     echo
     echo "After the test, the script will delete all the resources it created for the test. "
 	echo
-    echo "The script uses busybox image from Dockerhub to create pods. If the cluster cannot access"
+    echo "The script uses the busybox image from Dockerhub to create pods. If the cluster cannot access"
     echo "Dockerhub, copy the busybox image to a locally accessible registry and set the env variable"
     echo "CC_CSI_CHECK_BUSYBOX_IMAGE to the local image."
 	echo
@@ -120,7 +120,7 @@ prompt_user()
 			exit 0;
 			;;
 		*)
-			echo "Not a valid input, you could choose any of 'Y','y','YES','yes','N','n','NO','no', Exiting ..."
+			echo "Not a valid input. You can choose any of 'Y','y','YES','yes','N','n','NO','no'. Exiting."
 			printf "$headdivider\n"
 			exit 1;
 			;;
@@ -136,10 +136,10 @@ chkAllCrdsExists()
 	for c in ${CRDS[@]}
 	do
 		count=`kubectl get crd -o custom-columns='name:.metadata.name,version:.apiVersion' | grep snapshot | awk '{print $1":"$2}' | grep -w $c | wc -l`
-		[[ ${count} -eq 1 ]] && { echo "CRD $c found installed" | sed s/':'/' version '/g; } || { echo "The CRD $c is not found installed in the cluster" ; flag=1 ; }
+		[[ ${count} -eq 1 ]] && { echo "CRD $c found installed" | sed s/':'/' version '/g; } || { echo "The CRD $c is not found installed in the cluster." ; flag=1 ; }
 	done
 
-	[[ ${flag} -eq 1 ]] && { echo "Please install the missing CRDS first and then retry"; exit 1; } || { echo "CRD check PASSED"; }
+	[[ ${flag} -eq 1 ]] && { echo "Please install the missing CRDs first and then retry."; exit 1; } || { echo "CRD check PASSED"; }
 	echo
 	printf "$headdivider\n"
 }
@@ -149,8 +149,8 @@ getCsiDrivers()
 	# Get the list of csidrivers those exist in the cluster
 	csidrivers=(`kubectl get csidrivers | grep -v 'NAME' |awk '{print $1}'`)
 	csidriverslen=${#csidrivers[@]}
-	[ $csidriverslen -gt 0 ] || { echo "No CSI drivers Found in the cluster, Exiting..."; exit 1; }
-	printf "%-30s %-90s\n" "  " "Found these csi-drivers:"
+	[ $csidriverslen -gt 0 ] || { echo "No CSI drivers found in the cluster. Exiting."; exit 1; }
+	printf "%-30s %-90s\n" "  " "Found the following csi-drivers:"
 	csip=`echo ${csidrivers[@]} | sed s/' '/', '/g`
 	echo $csip
 	printf "$headdivider\n"
@@ -173,8 +173,8 @@ getStorageClasses()
 	storageclasses=(`kubectl get storageclass | grep -v 'NAME' | awk '{print $1}' | sort -u | uniq`)
 	storageclasseslen=${#storageclasses[@]}
 	storageclassp=`echo ${storageclasses[@]} | sed s/' '/', '/g`
-	[ $storageclasseslen -gt 0 ] || { echo "No StorageClasses found in the cluster, Exiting ...."; exit 1; }
-	printf "%-30s %-90s\n" "  " "Found following storage classes: "
+	[ $storageclasseslen -gt 0 ] || { echo "No StorageClasses found in the cluster. Exiting."; exit 1; }
+	printf "%-30s %-90s\n" "  " "Found the following storage classes: "
 	echo $storageclassp
 	printf "$headdivider\n"
 }
@@ -184,8 +184,8 @@ getVolumesnapshotClasses()
 	volumesnapshotclasses=(`kubectl get volumesnapshotclass | grep -v 'NAME' | awk '{print $1}' | sort -u | uniq`)
 	volumesnapshotclasslen=${#volumesnapshotclasses[@]}
 	volumesnapshotclassp=`echo ${volumesnapshotclasses[@]} |  sed s/' '/', '/g`
-	[ $volumesnapshotclasslen -gt 0 ] || { echo "No Volumesnapshotclass found in the cluster, Exiting ...."; exit 1; }
-        printf "%-30s %-90s\n"  "  " "Found following Volumesnapshotclasses: "
+	[ $volumesnapshotclasslen -gt 0 ] || { echo "No Volumesnapshotclass found in the cluster. Exiting."; exit 1; }
+        printf "%-30s %-90s\n"  "  " "Found the following Volumesnapshotclasses: "
 	echo $volumesnapshotclassp
 	printf "$headdivider\n"
 }
@@ -201,7 +201,7 @@ setProvisionerForSC()
         headdivider="+$headdiv$headdiv+$headdiv$headdiv+"
         format="%-60s %-60s %-1s\n"
         printf "$headdivider\n"
-	printf "%-30s %-90s %-1s\n" "|  " "Mapping of Storage class with it's Provisioner" "|"
+	printf "%-30s %-90s %-1s\n" "|  " "Listing of storage classes with their provisioners" "|"
 	printf "$headdivider\n"
 	printf "$format" "|  STORAGE CLASS" "|  PROVISIONER" "|"
 	printf "$headdivider\n"
@@ -227,7 +227,7 @@ chkAndDelCsiSetupTestNamespace()
 {
 
 	state=`kubectl get namespaces | grep csi-setup-test | wc -l`
-	[[ $state -gt 0 ]] && { echo "Found namespace csi-setup-test :( Deleting ..."; decommission $1 1; }
+	[[ $state -gt 0 ]] && { echo "Found namespace csi-setup-test. Deleting ..."; decommission $1 1; }
 	[[ -d ~/tmp/test_dir ]] && { rm -rf ~/tmp/test_dir/*.yaml > /dev/null 2>&1 ; }
 }
 
@@ -341,7 +341,7 @@ verifycleanup()
 	PODS=`kubectl get pods -n $1 -l cloudcasa.io/csi-verify-script=true 2> /dev/null | grep -v 'NAME' | wc -l`
 	VSS=`kubectl get volumesnapshot -n $1 -l cloudcasa.io/csi-verify-script=true 2> /dev/null | grep -v 'NAME' | wc -l`
 	PVCS=`kubectl get pvc -n $1 -l cloudcasa.io/csi-verify-script=true 2> /dev/null | grep -v 'NAME' | wc -l`
-	[[ $PODS -gt 0 || $VSS -gt 0 || $PVCS -gt 0 ]] && { [[ $retryleft -gt 0 ]] && { (( retryleft=retryleft-1 )) ; echo "waiting for cleanup with retriesleft=$retryleft"; sleep 5; verifycleanup $1 $retryleft; } || { echo "Cleanup is stuck... Exiting"; exit 1; } } || { echo "cleanup is done"; }
+	[[ $PODS -gt 0 || $VSS -gt 0 || $PVCS -gt 0 ]] && { [[ $retryleft -gt 0 ]] && { (( retryleft=retryleft-1 )) ; echo "Waiting for cleanup with retriesleft=$retryleft"; sleep 5; verifycleanup $1 $retryleft; } || { echo "Cleanup is stuck. Exiting."; exit 1; } } || { echo "Cleanup is done."; }
 }
 
 gennsyaml()
@@ -483,7 +483,7 @@ handleIfLonghorn()
 		VERS=`kubectl describe csidriver $DRIVER | grep 'driver.longhorn.io/version' | grep -v 'f:driver.longhorn.io/version' | cut -d ':' -f2 | cut -d 'v' -f2 | xargs`; 
 		MAJORV=`echo $VERS| tr '.' ' ' | awk '{ print $1}'`
 		MINOR=`echo $VERS| tr '.' ' ' | awk '{ print $2}'`
-		[[ $MAJORV -ge $MINSUPMAJV && $MINOR -ge $MINSUPMINV ]] && { echo "longhorn version: $VERS"; } || { echo "WARNING: You are running unsupported version: $VERS, supported version is >= $MINSUPMAJV.$MINSUPMINV"; }
+		[[ $MAJORV -ge $MINSUPMAJV && $MINOR -ge $MINSUPMINV ]] && { echo "longhorn version: $VERS"; } || { echo "WARNING: You are running an unsupported version of Longhorn: $VERS. Supported versions are >= $MINSUPMAJV.$MINSUPMINV"; }
 	fi
 }
 
@@ -566,7 +566,7 @@ do
                 	cd $PATH_TO_YAML_FILES;
                 	kubectl apply -f namespace.yaml; chknamespacestate $NS > /dev/null 2>&1;
 
-			echo "SC volume Binding mode is $SCBINDMODE, Provisioning the test PVC and POD now, Will validate the status of both first"
+			echo "SC volume Binding mode is $SCBINDMODE. Provisioning the test PVC and POD now. Will validate the status of both first."
                 	kubectl create -f busybox-pvc.yaml -n $NS > /dev/null 2>&1;
 
                 	export PVCNAME=`kubectl get pvc -n $NS | grep -v 'NAME' | awk '{print $1}' | xargs`
@@ -574,7 +574,7 @@ do
 
                 	kubectl apply -f $PATH_TO_YAML_FILES/busybox-deployment.yaml -n $NS > /dev/null 2>&1;
                 	PODNAME=`kubectl get pods -n $NS | grep -v 'NAME' | awk '{print $1}' | xargs`;
-			printf "Retrying on PVC and POD status check with 5s retrial timeout  "
+			printf "Retrying on PVC and POD status check with 5s retry timeout  "
 			chkPvcPodStatus $PVCNAME $PODNAME $NS $TTC;
                 	PVCPODCHK=$?
 			echo
@@ -599,7 +599,7 @@ do
                         		genvsyaml;
                         		kubectl create -f $PATH_TO_YAML_FILES/csi-snapshot-busybox.yaml -n $NS > /dev/null 2>&1 ;
                         		VSNAME=`kubectl get volumesnapshot -n $NS | grep -v 'NAME' | awk '{print $1}' | xargs`
-					printf "Retrying on Volumesnapshot $VSNAME status check with 5s retrial timeout  "
+					printf "Retrying on Volumesnapshot $VSNAME status check with 5s retry timeout  "
                         		chkVsStatus $VSNAME $NS $TTC
 					VSCHK=$?
 					[[ $VSCHK -eq 0 ]] && { RESULTS["volumesnapshot creation for VSC $j"]="PASSED"; RESIND+=("volumesnapshot creation for VSC $j"); echo "------------ Testing of volumesnapshot creation for VSC $j PASSED ------------"; echo; } || { RESULTS["volumesnapshot creation for VSC $j"]="FAILED"; RESIND+=("volumesnapshot creation for VSC $j"); echo " \"readyToUse\" flag of VSC $j didn't came to \"true\" even after max retries";echo "------------ Testing of volumesnapshot creation for VSC $j FAILED ------------"; echo; }
@@ -618,12 +618,12 @@ do
 				[[ $PODSTAT == 'Running' ]] && { RESULTS["POD creation for SC $i"]="PASSED"; RESIND+=("POD creation for SC $i"); echo "POD Check was PASSED"; } || { RESULTS["POD creation for SC $i"]="FAILED"; RESIND+=("POD creation for SC $i"); echo "POD Check was FAILED as POD status didn't came to \"Running\" even after max retries"; }
 				[[ $PODSTAT != 'Running' ]] && { echo "Here are POD Events:"; echo "Describing the pod $PODNAME" >>  $PATH_TO_YAML_FILES/cc-validate-storage.debug.txt ;  kubectl describe pod $PODNAME -n $NS >> $PATH_TO_YAML_FILES/cc-validate-storage.debug.txt; kubectl describe pod $PODNAME -n $NS | grep -A 10 'Events:' | grep -v 'Events:'; }
 
-		        	[[ $PVCSTAT == 'Bound' ]] && { RESULTS["PVC creation for SC $i"]="PASSED"; RESIND+=("PVC creation for SC $i"); echo "PVC Check was PASSED"; } || { RESULTS["PVC creation for SC $i"]="FAILED"; RESIND+=("PVC creation for SC $i"); echo "PVC Check was FAILED as PVC status didn't came to \"Bound\" even after max retries"; }	
+		        	[[ $PVCSTAT == 'Bound' ]] && { RESULTS["PVC creation for SC $i"]="PASSED"; RESIND+=("PVC creation for SC $i"); echo "PVC Check was PASSED"; } || { RESULTS["PVC creation for SC $i"]="FAILED"; RESIND+=("PVC creation for SC $i"); echo "PVC Check was FAILED as PVC status didn't come to \"Bound\" even after max retries"; }	
 				[[ $PVCSTAT != 'Bound' ]] && { echo "Here are PVC Events:"; echo "Describing the PVC $PVCNAME" >> $PATH_TO_YAML_FILES/cc-validate-storage.debug.txt; kubectl describe pvc $PVCNAME -n $NS >> $PATH_TO_YAML_FILES/cc-validate-storage.debug.txt; kubectl describe pvc $PVCNAME -n $NS | grep -A 10 'Events:' | grep -v 'Events:'; }
 				
 				RESULTS["volumesnapshot creation test for SC $i"]="NOT PERFORMED"
 				RESIND+=("volumesnapshot creation test for SC $i")	
-				echo "No Volumesnapshot creation test will be performed for any Volumesnapshotclass of SC $i as one of PVC POD check was failed, skipping to next Storageclass"
+				echo "No Volumesnapshot creation test will be performed for any Volumesnapshotclass of SC $i as one of PVC POD checks failed. Skipping to next Storageclass."
 				echo
 				deldepl $NS > /dev/null 2>&1
 				kubectl delete pvc $PVCNAME -n $NS --grace-period=0 --force  > /dev/null 2>&1 &
@@ -632,7 +632,7 @@ do
 
 			verifycleanup $NS $TTC	
 		else
-			echo "No Volumesnapshotclass found for Storageclass $i, skipping to the next Storageclass"
+			echo "No Volumesnapshotclass found for Storageclass $i. Skipping to the next Storageclass"
 			RESULTS["volumesnapshot creation test for SC $i"]="NOT PERFORMED"
 			RESIND+=("volumesnapshot creation test for SC $i")
 		fi
@@ -645,7 +645,7 @@ do
         fi
 done
 
-[[ $CSISC -eq 0 ]] && { echo "Could not find storage classes whose provisioners have corresponding CSI drivers. Exiting ..."; exit 0; }
+[[ $CSISC -eq 0 ]] && { echo "Could not find storage classes whose provisioners have corresponding CSI drivers. Exiting."; exit 0; }
 
 decommission $NS 1
 
