@@ -574,7 +574,7 @@ do
 
                 	kubectl apply -f $PATH_TO_YAML_FILES/busybox-deployment.yaml -n $NS > /dev/null 2>&1;
                 	PODNAME=`kubectl get pods -n $NS | grep -v 'NAME' | awk '{print $1}' | xargs`;
-			printf "Retrying on PVC and POD status check with 5s retry timeout  "
+			printf "Retrying PVC and POD status check with 5s retry timeout  "
 			chkPvcPodStatus $PVCNAME $PODNAME $NS $TTC;
                 	PVCPODCHK=$?
 			echo
@@ -599,7 +599,7 @@ do
                         		genvsyaml;
                         		kubectl create -f $PATH_TO_YAML_FILES/csi-snapshot-busybox.yaml -n $NS > /dev/null 2>&1 ;
                         		VSNAME=`kubectl get volumesnapshot -n $NS | grep -v 'NAME' | awk '{print $1}' | xargs`
-					printf "Retrying on Volumesnapshot $VSNAME status check with 5s retry timeout  "
+					printf "Retrying Volumesnapshot $VSNAME status check with 5s retry timeout  "
                         		chkVsStatus $VSNAME $NS $TTC
 					VSCHK=$?
 					[[ $VSCHK -eq 0 ]] && { RESULTS["volumesnapshot creation for VSC $j"]="PASSED"; RESIND+=("volumesnapshot creation for VSC $j"); echo "------------ Testing of volumesnapshot creation for VSC $j PASSED ------------"; echo; } || { RESULTS["volumesnapshot creation for VSC $j"]="FAILED"; RESIND+=("volumesnapshot creation for VSC $j"); echo " \"readyToUse\" flag of VSC $j didn't came to \"true\" even after max retries";echo "------------ Testing of volumesnapshot creation for VSC $j FAILED ------------"; echo; }
