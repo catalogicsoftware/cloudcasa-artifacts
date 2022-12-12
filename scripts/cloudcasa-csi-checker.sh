@@ -4,7 +4,7 @@
 
 #!/usr/bin/env bash
 
-SCRIPT_VERSION=0.55
+SCRIPT_VERSION=0.57
 echo "Version: $SCRIPT_VERSION"
 
 # Initialize all the associative array variables with global scope
@@ -25,8 +25,6 @@ headdivider="$headdiv$headdiv$headdiv$headdiv"
 width=60
 TTC=20
 CRDS=("volumesnapshotclasses.snapshot.storage.k8s.io:apiextensions.k8s.io/v1" "volumesnapshotcontents.snapshot.storage.k8s.io:apiextensions.k8s.io/v1" "volumesnapshots.snapshot.storage.k8s.io:apiextensions.k8s.io/v1")
-echo "Env:"
-echo "CC_CSI_CHECK_BUSYBOX_IMAGE=$CC_CSI_CHECK_BUSYBOX_IMAGE"
 [ -z $CC_CSI_CHECK_BUSYBOX_IMAGE ] && { IMAGE='busybox'; } || { IMAGE=$CC_CSI_CHECK_BUSYBOX_IMAGE; }
 KUBEPATH=
 
@@ -36,7 +34,7 @@ help_()
 echo "SYNOPSIS"
 echo "	cc-validate-storage.sh  [ Options ]"
 echo "DESCRIPTION"
-echo "	Script to verify CSI storage class configuration is correct."
+echo "	Script to verify that the CSI configuration on a given cluster is good."
 echo "	The script creates Pods using busybox image from Dockerhub. If your cluster cannot access Dockerhub, please copy the image <IMAGE> to a locally accessible registry and set the environment variable"
 echo "	CC_CSI_CHECK_BUSYBOX_IMAGE to the <image name> with proper tags."
 echo "OPTIONS"
@@ -45,7 +43,7 @@ echo "		For usage info"
 echo "	-c, --cleanup"
 echo "		Only clean up the test namespace. This is normally done automatically before exiting."
 echo "  -C, --collectlogs"
-echo "      For Describing the resources at any instant. Mostly used when another instance of the script is running or hung. This option exits the script after describing the resources."
+echo "      Collects details of all resources created by the script. Typically used if there is any problem with cleanup."
 echo "	-i, --image"
 echo "		For specifying a custom busybox image explicitly, This option is useful when public busybox image is not accessible and you have a busybox image with other tag in your private registry."
 echo "		User needs to login to the private registry and verify. The argument provided in this flag will overwrite the env variable CC_CSI_CHECK_BUSYBOX_IMAGE."
@@ -76,8 +74,10 @@ initial_check()
         KVMINOR=`kubectl version -o yaml 2> /dev/null | grep 'minor' | tail -1 | cut -d ':' -f2 | xargs | cut -d '+' -f1`
 	[[ $KVMAJOR -ge $SUPPMAJORV && $KVMINOR -ge $KVMINOR ]] || { echo >&2 "WARNING: Please upgrade your K8S cluster version to >= $SUPPMAJORV.$SUPPMINORV"; }
         echo "Your Cluster is running on Kubernetes version: $KVMAJOR.$KVMINOR"
-        echo "KUBECTL PATH: $KUBEPATH"
-	echo "KUBECONFIG: $KUBECONFIG"
+        echo "Env:"
+        echo "CC_CSI_CHECK_BUSYBOX_IMAGE = $CC_CSI_CHECK_BUSYBOX_IMAGE"
+        echo "KUBECTL PATH = $KUBEPATH"
+	echo "KUBECONFIG = $KUBECONFIG"
 	printf "$headdivider\n"
 	echo
 	echo
@@ -139,7 +139,7 @@ chkAllCrdsExists()
 		[[ ${count} -eq 1 ]] && { echo "CRD $c found installed" | sed s/':'/' version '/g; } || { echo "The CRD $c is not found installed in the cluster." ; flag=1 ; }
 	done
 
-	[[ ${flag} -eq 1 ]] && { echo "Please install the missing CRDs first and then retry."; exit 1; } || { echo "CRD check PASSED"; }
+	[[ ${flag} -eq 1 ]] && { echo "Please install the missing CRDs first and then rerun the script."; exit 1; } || { echo "CRD check PASSED"; }
 	echo
 	printf "$headdivider\n"
 }
@@ -173,7 +173,7 @@ getStorageClasses()
 	storageclasses=(`kubectl get storageclass | grep -v 'NAME' | awk '{print $1}' | sort -u | uniq`)
 	storageclasseslen=${#storageclasses[@]}
 	storageclassp=`echo ${storageclasses[@]} | sed s/' '/', '/g`
-	[ $storageclasseslen -gt 0 ] || { echo "No StorageClasses found in the cluster. Exiting."; exit 1; }
+	[ $storageclasseslen -gt 0 ] || { echo "No storage classes are found in the cluster. Exiting."; exit 1; }
 	printf "%-30s %-90s\n" "  " "Found the following storage classes: "
 	echo $storageclassp
 	printf "$headdivider\n"
@@ -184,7 +184,7 @@ getVolumesnapshotClasses()
 	volumesnapshotclasses=(`kubectl get volumesnapshotclass | grep -v 'NAME' | awk '{print $1}' | sort -u | uniq`)
 	volumesnapshotclasslen=${#volumesnapshotclasses[@]}
 	volumesnapshotclassp=`echo ${volumesnapshotclasses[@]} |  sed s/' '/', '/g`
-	[ $volumesnapshotclasslen -gt 0 ] || { echo "No Volumesnapshotclass found in the cluster. Exiting."; exit 1; }
+	[ $volumesnapshotclasslen -gt 0 ] || { echo "No Volumesnapshotclass resources are found in the cluster. Exiting."; exit 1; }
         printf "%-30s %-90s\n"  "  " "Found the following Volumesnapshotclasses: "
 	echo $volumesnapshotclassp
 	printf "$headdivider\n"
@@ -341,7 +341,7 @@ verifycleanup()
 	PODS=`kubectl get pods -n $1 -l cloudcasa.io/csi-verify-script=true 2> /dev/null | grep -v 'NAME' | wc -l`
 	VSS=`kubectl get volumesnapshot -n $1 -l cloudcasa.io/csi-verify-script=true 2> /dev/null | grep -v 'NAME' | wc -l`
 	PVCS=`kubectl get pvc -n $1 -l cloudcasa.io/csi-verify-script=true 2> /dev/null | grep -v 'NAME' | wc -l`
-	[[ $PODS -gt 0 || $VSS -gt 0 || $PVCS -gt 0 ]] && { [[ $retryleft -gt 0 ]] && { (( retryleft=retryleft-1 )) ; echo "Waiting for cleanup with retriesleft=$retryleft"; sleep 5; verifycleanup $1 $retryleft; } || { echo "Cleanup is stuck. Exiting."; exit 1; } } || { echo "Cleanup is done."; }
+	[[ $PODS -gt 0 || $VSS -gt 0 || $PVCS -gt 0 ]] && { [[ $retryleft -gt 0 ]] && { (( retryleft=retryleft-1 )) ; echo "Waiting for cleanup with retries left=$retryleft"; sleep 5; verifycleanup $1 $retryleft; } || { echo "Cleanup is stuck. Exiting."; exit 1; } } || { echo "Cleanup is done."; }
 }
 
 gennsyaml()
@@ -602,7 +602,7 @@ do
 					printf "Retrying Volumesnapshot $VSNAME status check with 5s retry timeout  "
                         		chkVsStatus $VSNAME $NS $TTC
 					VSCHK=$?
-					[[ $VSCHK -eq 0 ]] && { RESULTS["volumesnapshot creation for VSC $j"]="PASSED"; RESIND+=("volumesnapshot creation for VSC $j"); echo "------------ Testing of volumesnapshot creation for VSC $j PASSED ------------"; echo; } || { RESULTS["volumesnapshot creation for VSC $j"]="FAILED"; RESIND+=("volumesnapshot creation for VSC $j"); echo " \"readyToUse\" flag of VSC $j didn't came to \"true\" even after max retries";echo "------------ Testing of volumesnapshot creation for VSC $j FAILED ------------"; echo; }
+					[[ $VSCHK -eq 0 ]] && { RESULTS["volumesnapshot creation for VSC $j"]="PASSED"; RESIND+=("volumesnapshot creation for VSC $j"); echo "------------ Testing of volumesnapshot creation for VSC $j PASSED ------------"; echo; } || { RESULTS["volumesnapshot creation for VSC $j"]="FAILED"; RESIND+=("volumesnapshot creation for VSC $j"); echo " \"readyToUse\" flag of VSC $j wasn't found to be \"true\" even after max retries";echo "------------ Testing of volumesnapshot creation for VSC $j FAILED ------------"; echo; }
 					[[ $VSCHK -ne 0 ]] && { echo "Here are volumesnapshot Events:"; echo "Describing the volumesnapshot for $j" >> $PATH_TO_YAML_FILES/cc-validate-storage.debug.txt ;kubectl describe volumesnapshot $VSNAME -n $NS >> $PATH_TO_YAML_FILES/cc-validate-storage.debug.txt ;  kubectl describe volumesnapshot $VSNAME -n $NS | grep -A 10 'Events:' | grep -v 'Events:'; }
                         		kubectl delete volumesnapshot $VSNAME -n $NS --grace-period=0 --force  > /dev/null 2>&1 & 
 					kubectl patch volumesnapshot $VSNAME --type json --patch='[{ "op": "remove", "path": "/metadata/finalizers"}]' -n $NS > /dev/null 2>&1 
@@ -615,10 +615,10 @@ do
 		        	PVCSTAT=`kubectl get pvc $PVCNAME -n $NS -o yaml | grep -v 'f:phase:' | grep 'phase:' | cut -f2 -d ":" | xargs`
 		        	PODSTAT=`kubectl get pod $PODNAME -n $NS -o yaml | grep -v 'f:phase:' | grep 'phase:' | cut -f2 -d ":" | xargs`
 
-				[[ $PODSTAT == 'Running' ]] && { RESULTS["POD creation for SC $i"]="PASSED"; RESIND+=("POD creation for SC $i"); echo "POD Check was PASSED"; } || { RESULTS["POD creation for SC $i"]="FAILED"; RESIND+=("POD creation for SC $i"); echo "POD Check was FAILED as POD status didn't came to \"Running\" even after max retries"; }
+				[[ $PODSTAT == 'Running' ]] && { RESULTS["POD creation for SC $i"]="PASSED"; RESIND+=("POD creation for SC $i"); echo "POD Check was PASSED"; } || { RESULTS["POD creation for SC $i"]="FAILED"; RESIND+=("POD creation for SC $i"); echo "POD Check FAILED as POD status wasn't found to be \"Running\" even after max retries"; }
 				[[ $PODSTAT != 'Running' ]] && { echo "Here are POD Events:"; echo "Describing the pod $PODNAME" >>  $PATH_TO_YAML_FILES/cc-validate-storage.debug.txt ;  kubectl describe pod $PODNAME -n $NS >> $PATH_TO_YAML_FILES/cc-validate-storage.debug.txt; kubectl describe pod $PODNAME -n $NS | grep -A 10 'Events:' | grep -v 'Events:'; }
 
-		        	[[ $PVCSTAT == 'Bound' ]] && { RESULTS["PVC creation for SC $i"]="PASSED"; RESIND+=("PVC creation for SC $i"); echo "PVC Check was PASSED"; } || { RESULTS["PVC creation for SC $i"]="FAILED"; RESIND+=("PVC creation for SC $i"); echo "PVC Check was FAILED as PVC status didn't come to \"Bound\" even after max retries"; }	
+		        	[[ $PVCSTAT == 'Bound' ]] && { RESULTS["PVC creation for SC $i"]="PASSED"; RESIND+=("PVC creation for SC $i"); echo "PVC Check was PASSED"; } || { RESULTS["PVC creation for SC $i"]="FAILED"; RESIND+=("PVC creation for SC $i"); echo "PVC Check FAILED as PVC status wasn't found to be \"Bound\" even after max retries"; }	
 				[[ $PVCSTAT != 'Bound' ]] && { echo "Here are PVC Events:"; echo "Describing the PVC $PVCNAME" >> $PATH_TO_YAML_FILES/cc-validate-storage.debug.txt; kubectl describe pvc $PVCNAME -n $NS >> $PATH_TO_YAML_FILES/cc-validate-storage.debug.txt; kubectl describe pvc $PVCNAME -n $NS | grep -A 10 'Events:' | grep -v 'Events:'; }
 				
 				RESULTS["volumesnapshot creation test for SC $i"]="NOT PERFORMED"
@@ -653,4 +653,4 @@ echo
 echo
 
 resultsummary 
-echo "Check the file \"$PATH_TO_YAML_FILES/cc-validate-storage.debug.txt\", For more info."
+echo "\nPlease Check the file \"$PATH_TO_YAML_FILES/cc-validate-storage.debug.txt\", For more info.\n"
