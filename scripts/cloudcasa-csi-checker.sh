@@ -4,7 +4,7 @@
 
 #!/usr/bin/env bash
 
-SCRIPT_VERSION=0.57
+SCRIPT_VERSION=0.59
 echo "Version: $SCRIPT_VERSION"
 
 # Initialize all the associative array variables with global scope
@@ -73,7 +73,7 @@ initial_check()
         KVMAJOR=`kubectl version -o yaml 2> /dev/null | grep 'major' | tail -1 | cut -d ':' -f2 | xargs | cut -d '+' -f1`
         KVMINOR=`kubectl version -o yaml 2> /dev/null | grep 'minor' | tail -1 | cut -d ':' -f2 | xargs | cut -d '+' -f1`
 	[[ $KVMAJOR -ge $SUPPMAJORV && $KVMINOR -ge $KVMINOR ]] || { echo >&2 "WARNING: Please upgrade your K8S cluster version to >= $SUPPMAJORV.$SUPPMINORV"; }
-        echo "Your Cluster is running on Kubernetes version: $KVMAJOR.$KVMINOR"
+        echo "Your Cluster is running Kubernetes version: $KVMAJOR.$KVMINOR"
         echo "Env:"
         echo "CC_CSI_CHECK_BUSYBOX_IMAGE = $CC_CSI_CHECK_BUSYBOX_IMAGE"
         echo "KUBECTL PATH = $KUBEPATH"
@@ -621,7 +621,7 @@ do
 		        	[[ $PVCSTAT == 'Bound' ]] && { RESULTS["PVC creation for SC $i"]="PASSED"; RESIND+=("PVC creation for SC $i"); echo "PVC Check was PASSED"; } || { RESULTS["PVC creation for SC $i"]="FAILED"; RESIND+=("PVC creation for SC $i"); echo "PVC Check FAILED as PVC status wasn't found to be \"Bound\" even after max retries"; }	
 				[[ $PVCSTAT != 'Bound' ]] && { echo "Here are PVC Events:"; echo "Describing the PVC $PVCNAME" >> $PATH_TO_YAML_FILES/cc-validate-storage.debug.txt; kubectl describe pvc $PVCNAME -n $NS >> $PATH_TO_YAML_FILES/cc-validate-storage.debug.txt; kubectl describe pvc $PVCNAME -n $NS | grep -A 10 'Events:' | grep -v 'Events:'; }
 				
-				RESULTS["volumesnapshot creation test for SC $i"]="NOT PERFORMED"
+				RESULTS["volumesnapshot creation test for SC $i"]="SKIPPED"
 				RESIND+=("volumesnapshot creation test for SC $i")	
 				echo "No Volumesnapshot creation test will be performed for any Volumesnapshotclass of SC $i as one of PVC POD checks failed. Skipping to next Storageclass."
 				echo
@@ -633,7 +633,7 @@ do
 			verifycleanup $NS $TTC	
 		else
 			echo "No Volumesnapshotclass found for Storageclass $i. Skipping to the next Storageclass"
-			RESULTS["volumesnapshot creation test for SC $i"]="NOT PERFORMED"
+			RESULTS["volumesnapshot creation test for SC $i"]="SKIPPED"
 			RESIND+=("volumesnapshot creation test for SC $i")
 		fi
 
