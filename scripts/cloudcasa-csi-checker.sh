@@ -4,7 +4,7 @@
 
 #!/usr/bin/env bash
 
-SCRIPT_VERSION=0.59
+SCRIPT_VERSION=0.66
 echo "Version: $SCRIPT_VERSION"
 
 # Initialize all the associative array variables with global scope
@@ -24,6 +24,7 @@ headdiv="=============================="
 headdivider="$headdiv$headdiv$headdiv$headdiv"
 width=60
 TTC=20
+TIMEOUT=5
 CRDS=("volumesnapshotclasses.snapshot.storage.k8s.io:apiextensions.k8s.io/v1" "volumesnapshotcontents.snapshot.storage.k8s.io:apiextensions.k8s.io/v1" "volumesnapshots.snapshot.storage.k8s.io:apiextensions.k8s.io/v1")
 [ -z $CC_CSI_CHECK_BUSYBOX_IMAGE ] && { IMAGE='busybox'; } || { IMAGE=$CC_CSI_CHECK_BUSYBOX_IMAGE; }
 KUBEPATH=
@@ -47,6 +48,10 @@ echo "      Collects details of all resources created by the script. Typically u
 echo "	-i, --image"
 echo "		For specifying a custom busybox image explicitly, This option is useful when public busybox image is not accessible and you have a busybox image with other tag in your private registry."
 echo "		User needs to login to the private registry and verify. The argument provided in this flag will overwrite the env variable CC_CSI_CHECK_BUSYBOX_IMAGE."
+echo "	-R, --retry"
+echo "		Provide this flag to run the script with custom retry count, this flag will change the retry count for resource status, by default it is set to 20"
+echo "	-T, --timeout"
+echo "		Provide this flag to run the script with custom retry timeout between consecutive retrials on resource status, by default it is set to 5 sec"
 echo "EXAMPLES"
 echo "	./cc-validate-storage.sh"
 echo "	./cc-validate-storage.sh  -h"
@@ -247,7 +252,7 @@ chkPvcPodStatus()
                         return 0;
                         ;;
                 *)
-                        [[ $retryleft -gt 0 ]] && { (( retryleft=retryleft-1 )); printf >&2 ".  "; sleep 5; chkPvcPodStatus $1 $2 $3 $retryleft; } || { return 1; }
+                        [[ $retryleft -gt 0 ]] && { (( retryleft=retryleft-1 )); printf >&2 ".  "; sleep $TIMEOUT; chkPvcPodStatus $1 $2 $3 $retryleft; } || { return 1; }
                         ;;
         esac
 
@@ -266,7 +271,7 @@ chkVsStatus()
                         return 0;
                         ;;
                 'false')
-			[[ $retryleft -gt 0 ]] && { (( retryleft=retryleft-1 )); printf >&2 ".  "; sleep 5; chkVsStatus $1 $2 $retryleft; } || { return 1; }
+			[[ $retryleft -gt 0 ]] && { (( retryleft=retryleft-1 )); printf >&2 ".  "; sleep $TIMEOUT; chkVsStatus $1 $2 $retryleft; } || { return 1; }
                         ;;
                 *)
                         return 1;
@@ -280,7 +285,7 @@ delpvc()
        	pvcs=(`kubectl get pvc -n $NS | grep -vi 'NAME' | awk '{print $1}'`) 
 	for p in ${pvcs[@]}
 	do
-		kubectl delete pvc ${p} -n ${NS} --force  > /dev/null 2>&1 
+		kubectl delete pvc ${p} -n ${NS}  > /dev/null 2>&1 
 	done
 }
 
@@ -291,30 +296,71 @@ delvs()
         vss=(`kubectl get volumesnapshot -n $NS | grep -vi 'NAME' | awk '{print $1}'`)     
         for v in ${vss[@]}
         do
-                kubectl delete volumesnapshot ${v} -n ${NS} --force  > /dev/null 2>&1 
+                kubectl delete volumesnapshot ${v} -n ${NS}  > /dev/null 2>&1 
         done
 }
 
-deldepl()
+deldepl_()
 {
 	NS=$1
 	kubectl delete -f ${PATH_TO_YAML_FILES}/busybox-deployment.yaml -n $NS --force --grace-period=0 > /dev/null 2>&1 & 
-       	sleep 5
-	TERMINATINGPODS=(`kubectl get pods -n $NS | grep -v 'NAME' | grep 'Terminating' | awk '{print $1}'`)
+       	sleep $TIMEOUT
+	TERMINATINGPODS=(`kubectl get pods -n $NS | grep -v 'NAME' | awk '{print $1}'`)
 	for p in ${TERMINATINGPODS[@]}
 	do
 		kubectl delete pod $p -n $NS --force --grace-period=0 > /dev/null 2>&1 
 	done
 }
 
+verifydeplcleanup()
+{
+	    NS=$1
+        retryleft=$2
+        TERMINATINGPODS=(`kubectl get pods -n $NS 2> /dev/null | grep -v 'NAME' | awk '{print $1}'`)
+	    [[ ${#TERMINATINGPODS[@]} -gt 0 ]] && { [[ $retryleft -gt 0 ]] && { (( retryleft=retryleft-1 )) ; printf ". "; sleep $TIMEOUT; verifydeplcleanup $NS $retryleft; } || { echo "Deployment Cleanup is stuck. Please verify the resources and clean those manually. Exiting ..."; exit 1; } } || { echo; echo "Deployment cleanup is done."; }
+}
+
+deldepl()
+{
+        NS=$1
+        kubectl delete -f ${PATH_TO_YAML_FILES}/busybox-deployment.yaml -n $NS > /dev/null 2>&1 &
+        sleep $TIMEOUT
+        TERMINATINGPODS=(`kubectl get pods -n $NS 2> /dev/null | grep -v 'NAME' | awk '{print $1}'`)
+	    [[ ${#TERMINATINGPODS[@]} -gt 0 ]] && { printf "Checking deployment cleanup (will try $TTC times with ${TIMEOUT}s interval) "; verifydeplcleanup $NS $TTC; }
+}
+
 delsnapcon()
 {
-	for i in `kubectl get volumesnapshotcontent | grep csi-setup-test | awk '{print $1}'`
+	NS=$1
+	for vsccs in `kubectl get volumesnapshotcontent | grep $NS | awk '{print $1}'`
 	do          
-		kubectl patch volumesnapshotcontent $i --type json --patch='[{ "op": "replace", "path": "/spec/deletionPolicy", value: Delete }]' > /dev/null 2>&1           
-		kubectl delete volumesnapshotcontent $i > /dev/null 2>&1 & 
-		kubectl patch volumesnapshotcontent $i --type json --patch='[{ "op": "remove", "path": "/metadata/finalizers" }]' > /dev/null 2>&1 
+		kubectl patch volumesnapshotcontent $vsccs --type json --patch='[{ "op": "replace", "path": "/spec/deletionPolicy", value: Delete }]' > /dev/null 2>&1           
+		kubectl delete volumesnapshotcontent $vsccs > /dev/null 2>&1 & 
+		# kubectl patch volumesnapshotcontent $vsccs --type json --patch='[{ "op": "remove", "path": "/metadata/finalizers" }]' > /dev/null 2>&1 
 	done
+}
+
+delpv()
+{
+	NS=$1
+	for pvss in `kubectl get pv 2> /dev/null | grep $NS | awk '{print $1}'`
+	do
+		kubectl patch pv $pvss --type json --patch='[[{ "op": "replace", "path": "/spec/persistentVolumeReclaimPolicy", value: Delete }]]' > /dev/null 2>&1
+		kubectl delete pv $pvss > /dev/null 2>&1 &
+		# kubectl patch pv $pvss --type json --patch='[{ "op": "remove", "path": "/metadata/finalizers" }]' > /dev/null 2>&1
+	done
+}
+
+patchpv()
+{
+	PVNAME_=$1
+	kubectl patch pv $PVNAME_ -p '{"spec":{"persistentVolumeReclaimPolicy":"Delete"}}' > /dev/null 2>&1
+}
+
+patchvsc()
+{
+	VSCNAME_=$1
+	kubectl patch volumesnapshotcontent $VSCNAME_ --type json --patch='[{ "op": "replace", "path": "/spec/deletionPolicy", value: Delete }]' > /dev/null 2>&1
 }
 
 decommission()
@@ -324,14 +370,16 @@ decommission()
 	PODS=`kubectl get pods -n $NS 2> /dev/null | grep -v 'NAME' | wc -l`
 	VSS=`kubectl get volumesnapshot -n $NS 2> /dev/null | grep -v 'NAME' | wc -l`
 	PVCS=`kubectl get pvc -n $NS 2> /dev/null | grep -v 'NAME' | wc -l`
-	VSCS=`kubectl get volumesnapshotcontent | grep $NS | awk '{print $1}' | wc -l`
+	PVS=`kubectl get pv 2> /dev/null | grep $NS | awk '{print $1}' | wc -l`
+	VSCS=`kubectl get volumesnapshotcontent 2> /dev/null | grep $NS | awk '{print $1}' | wc -l`
 
-    echo "Deleting namespace $NS, pods=$PODS, volumesnapshots=$VSS, volumesnapshotcontents=$VSCS, pvcs=$PVCS"
+        echo "Deleting namespace $NS, pods=$PODS, volumesnapshots=$VSS, volumesnapshotcontents=$VSCS, pvcs=$PVCS"
 
-	[[ $PODS -gt 0 ]] && { deldepl $1; }
-	[[ $VSS -gt 0 ]] && { delvs $1; } 
-	[[ $PVCS -gt 0 ]] && { delpvc $1; }
-	[[ $VSCS -gt 0 ]] && { delsnapcon ; }
+	[[ $PODS -gt 0 ]] && { deldepl $NS; }
+	[[ $PVCS -gt 0 ]] && { delpvc $NS; }
+        [[ $VSS -gt 0 ]] && { delvs $NS; }
+	[[ $VSCS -gt 0 ]] && { delsnapcon $NS; }
+	[[ $PVS -gt 0 ]] && { delpv $NS;}
 	[[ $NSS -gt 0 ]] && { kubectl delete -f ${PATH_TO_YAML_FILES}/namespace.yaml --force  > /dev/null 2>&1 ; }
 }
 
@@ -341,7 +389,7 @@ verifycleanup()
 	PODS=`kubectl get pods -n $1 -l cloudcasa.io/csi-verify-script=true 2> /dev/null | grep -v 'NAME' | wc -l`
 	VSS=`kubectl get volumesnapshot -n $1 -l cloudcasa.io/csi-verify-script=true 2> /dev/null | grep -v 'NAME' | wc -l`
 	PVCS=`kubectl get pvc -n $1 -l cloudcasa.io/csi-verify-script=true 2> /dev/null | grep -v 'NAME' | wc -l`
-	[[ $PODS -gt 0 || $VSS -gt 0 || $PVCS -gt 0 ]] && { [[ $retryleft -gt 0 ]] && { (( retryleft=retryleft-1 )) ; echo "Waiting for cleanup with retries left=$retryleft"; sleep 5; verifycleanup $1 $retryleft; } || { echo "Cleanup is stuck. Exiting."; exit 1; } } || { echo "Cleanup is done."; }
+	[[ $PODS -gt 0 || $VSS -gt 0 || $PVCS -gt 0 ]] && { [[ $retryleft -gt 0 ]] && { (( retryleft=retryleft-1 )) ; echo "Waiting for cleanup with retries left=$retryleft"; sleep $TIMEOUT; verifycleanup $1 $retryleft; } || { echo "Cleanup is stuck. Exiting."; exit 1; } } || { echo "Cleanup is done."; }
 }
 
 gennsyaml()
@@ -467,8 +515,8 @@ getinfo()
 
 	[[ ${#PODS[@]} -gt 0 ]] && { echo "==========================================================================================="; echo "======================= Describing PODs in namespace $NS =======================" ; echo "==========================================================================================="; for pd in ${PODS[@]}; do kubectl describe pod $pd -n $NS; echo "===========================================================================================";	done; 	echo ;	echo; }
 	[[ ${#PVCS[@]} -gt 0 ]] && { echo "==========================================================================================="; echo "======================= Describing PVCs in namespace $NS ======================="; echo "==========================================================================================="; for p in ${PVCS[@]}; do kubectl describe pvc $p -n $NS; echo "==========================================================================================="; done;  echo ; echo ; }
-        [[ ${#VSS[@]} -gt 0 ]] && { echo "======================================================================================================"; echo "======================= Describing volumesnapshots in namespace $NS ======================="; echo "======================================================================================================"; for v in ${VSS[@]}; do kubectl describe volumesnapshots $v -n $NS; echo "======================================================================================================"; done; echo; echo;}
-        [[ ${#VSCS[@]} -gt 0 ]] && { echo "============================================================================================================"; echo "======================= Describing volumesnapshotcontent in namespace $NS ======================="; echo "============================================================================================================"; for vs in ${VSCS[@]}; do kubectl describe volumesnapshotcontent $vs -n $NS; echo "============================================================================================================"; done; echo; echo; } 
+    [[ ${#VSS[@]} -gt 0 ]] && { echo "======================================================================================================"; echo "======================= Describing volumesnapshots in namespace $NS ======================="; echo "======================================================================================================"; for v in ${VSS[@]}; do kubectl describe volumesnapshots $v -n $NS; echo "======================================================================================================"; done; echo; echo;}
+    [[ ${#VSCS[@]} -gt 0 ]] && { echo "============================================================================================================"; echo "======================= Describing volumesnapshotcontent in namespace $NS ======================="; echo "============================================================================================================"; for vs in ${VSCS[@]}; do kubectl describe volumesnapshotcontent $vs -n $NS; echo "============================================================================================================"; done; echo; echo; } 
 	
 }
 
@@ -487,30 +535,48 @@ handleIfLonghorn()
 	fi
 }
 
-VALID_ARGS=$(getopt -o hCci: --long help,collectlogs,cleanup,image: -- "$@")
+VALID_ARGS=$(getopt -o hCci:T:R: --long help,collectlogs,cleanup,image:,timeout:,retry: -- "$@")
 eval set -- "$VALID_ARGS"
+ST=$?
+if [[ $ST -ne 0 ]]; then
+    help_; 
+    exit 1;
+fi
 
-
-case "$1" in
-    -h | --help)
-        help_;
-        ;;
-    -c | --cleanup)
-        echo "Processing cleanup"
-	decommission $NS 1
-        verifycleanup $NS $TTC
-        exit 0;
-        ;;
-    -C | --collectlogs)
-        getinfo;
-	exit 0;
-	;;
-    -i | --image)
-	IMAGE=$2
-	;;
-     *)
-        ;;
-esac
+while [ : ]; do
+	case "$1" in
+		-h | --help)
+			help_;
+			exit 0;
+        	;;
+		-c | --cleanup)
+			echo "Processing cleanup";
+			decommission $NS 1
+			verifycleanup $NS $TTC
+			exit 0;
+        	;;
+		-C | --collectlogs)
+			getinfo;
+			exit 0;
+		;;
+		-i | --image)
+			IMAGE=$2;
+			shift 2;
+		;;
+		-T | --timeout)
+			TIMEOUT=$2;
+			shift 2;
+		;;
+		-R | --retry)
+			TTC=$2;
+			shift 2;
+		;;
+		--)
+			shift;
+			break;
+        	;;
+	esac
+done
 
 prompt_user
 chkAllCrdsExists
@@ -536,6 +602,8 @@ headdivider="$headdiv$headdiv$headdiv$headdiv"
 format="%-60s %-60s %-1s\n"
 
 CSISC=0
+
+#echo "" > $PATH_TO_YAML_FILES/pv.txt
 
 for i in ${storageclasses[@]}
 do
@@ -569,18 +637,21 @@ do
 			echo "SC volume Binding mode is $SCBINDMODE. Provisioning the test PVC and POD now. Will validate the status of both first."
                 	kubectl create -f busybox-pvc.yaml -n $NS > /dev/null 2>&1;
 
-                	export PVCNAME=`kubectl get pvc -n $NS | grep -v 'NAME' | awk '{print $1}' | xargs`
-                	gendeplyaml;
+			export PVCNAME=`kubectl get pvc -n $NS -o yaml | grep 'name:' | cut -f2 -d ':' | xargs`
+                	
+			gendeplyaml;
 
                 	kubectl apply -f $PATH_TO_YAML_FILES/busybox-deployment.yaml -n $NS > /dev/null 2>&1;
                 	PODNAME=`kubectl get pods -n $NS | grep -v 'NAME' | awk '{print $1}' | xargs`;
-			printf "Retrying PVC and POD status check with 5s retry timeout  "
+			printf "Checking PVC and POD status (will try $TTC times with ${TIMEOUT}s interval) "
 			chkPvcPodStatus $PVCNAME $PODNAME $NS $TTC;
                 	PVCPODCHK=$?
 			echo
 	
                 	if [ $PVCPODCHK -eq 0 ] 
-			then	
+			then
+				export PVNAME=`kubectl get pvc $PVCNAME -n $NS -o yaml | grep 'volumeName:' | cut -f2 -d ':' | xargs`
+				patchpv $PVNAME;	
 				echo "PVC creation test PASSED"
 				echo "POD creation test PASSED"
 				RESULTS["PVC creation for SC $i"]="PASSED"
@@ -598,19 +669,20 @@ do
                         		export VSPREF="snap-${j}"
                         		genvsyaml;
                         		kubectl create -f $PATH_TO_YAML_FILES/csi-snapshot-busybox.yaml -n $NS > /dev/null 2>&1 ;
-                        		VSNAME=`kubectl get volumesnapshot -n $NS | grep -v 'NAME' | awk '{print $1}' | xargs`
-					printf "Retrying Volumesnapshot $VSNAME status check with 5s retry timeout  "
+                        		VSNAME=`kubectl get volumesnapshot -n $NS -o yaml | grep 'name:' | cut -f2 -d ':' | xargs`
+					printf "Checking Volumesnapshot $VSNAME status (will try $TTC times with ${TIMEOUT}s interval) "
                         		chkVsStatus $VSNAME $NS $TTC
 					VSCHK=$?
-					[[ $VSCHK -eq 0 ]] && { RESULTS["volumesnapshot creation for VSC $j"]="PASSED"; RESIND+=("volumesnapshot creation for VSC $j"); echo "------------ Testing of volumesnapshot creation for VSC $j PASSED ------------"; echo; } || { RESULTS["volumesnapshot creation for VSC $j"]="FAILED"; RESIND+=("volumesnapshot creation for VSC $j"); echo " \"readyToUse\" flag of VSC $j wasn't found to be \"true\" even after max retries";echo "------------ Testing of volumesnapshot creation for VSC $j FAILED ------------"; echo; }
+					[[ $VSCHK -eq 0 ]] && { VSCONAME=`kubectl get volumesnapshot $VSNAME -n $NS -o yaml | grep 'boundVolumeSnapshotContentName:' | cut -f2 -d ':' | xargs` ; patchvsc $VSCONAME; RESULTS["volumesnapshot creation for VSC $j"]="PASSED"; RESIND+=("volumesnapshot creation for VSC $j"); echo "------------ Testing of volumesnapshot creation for VSC $j PASSED ------------"; echo; } || { RESULTS["volumesnapshot creation for VSC $j"]="FAILED"; RESIND+=("volumesnapshot creation for VSC $j"); echo " \"readyToUse\" flag of VSC $j wasn't found to be \"true\" even after max retries";echo "------------ Testing of volumesnapshot creation for VSC $j FAILED ------------"; echo; }
 					[[ $VSCHK -ne 0 ]] && { echo "Here are volumesnapshot Events:"; echo "Describing the volumesnapshot for $j" >> $PATH_TO_YAML_FILES/cc-validate-storage.debug.txt ;kubectl describe volumesnapshot $VSNAME -n $NS >> $PATH_TO_YAML_FILES/cc-validate-storage.debug.txt ;  kubectl describe volumesnapshot $VSNAME -n $NS | grep -A 10 'Events:' | grep -v 'Events:'; }
-                        		kubectl delete volumesnapshot $VSNAME -n $NS --grace-period=0 --force  > /dev/null 2>&1 & 
-					kubectl patch volumesnapshot $VSNAME --type json --patch='[{ "op": "remove", "path": "/metadata/finalizers"}]' -n $NS > /dev/null 2>&1 
-					sleep 5
+                        		kubectl delete volumesnapshot $VSNAME -n $NS  > /dev/null 2>&1 & 
+					# kubectl patch volumesnapshot $VSNAME --type json --patch='[{ "op": "remove", "path": "/metadata/finalizers"}]' -n $NS > /dev/null 2>&1 
+					sleep $TIMEOUT
                 		done
-				deldepl $NS > /dev/null 2>&1
-                       		kubectl delete pvc $PVCNAME -n $NS --grace-period=0 --force  > /dev/null 2>&1 &
-                       		kubectl patch pvc $PVCNAME --type json --patch='[{ "op": "remove", "path": "/metadata/finalizers"}]' -n $NS  > /dev/null 2>&1
+				deldepl $NS
+                       		kubectl delete pvc $PVCNAME -n $NS  > /dev/null 2>&1 &
+				sleep $TIMEOUT
+                       		# kubectl patch pvc $PVCNAME --type json --patch='[{ "op": "remove", "path": "/metadata/finalizers"}]' -n $NS  > /dev/null 2>&1
 			else	
 		        	PVCSTAT=`kubectl get pvc $PVCNAME -n $NS -o yaml | grep -v 'f:phase:' | grep 'phase:' | cut -f2 -d ":" | xargs`
 		        	PODSTAT=`kubectl get pod $PODNAME -n $NS -o yaml | grep -v 'f:phase:' | grep 'phase:' | cut -f2 -d ":" | xargs`
@@ -618,16 +690,17 @@ do
 				[[ $PODSTAT == 'Running' ]] && { RESULTS["POD creation for SC $i"]="PASSED"; RESIND+=("POD creation for SC $i"); echo "POD Check was PASSED"; } || { RESULTS["POD creation for SC $i"]="FAILED"; RESIND+=("POD creation for SC $i"); echo "POD Check FAILED as POD status wasn't found to be \"Running\" even after max retries"; }
 				[[ $PODSTAT != 'Running' ]] && { echo "Here are POD Events:"; echo "Describing the pod $PODNAME" >>  $PATH_TO_YAML_FILES/cc-validate-storage.debug.txt ;  kubectl describe pod $PODNAME -n $NS >> $PATH_TO_YAML_FILES/cc-validate-storage.debug.txt; kubectl describe pod $PODNAME -n $NS | grep -A 10 'Events:' | grep -v 'Events:'; }
 
-		        	[[ $PVCSTAT == 'Bound' ]] && { RESULTS["PVC creation for SC $i"]="PASSED"; RESIND+=("PVC creation for SC $i"); echo "PVC Check was PASSED"; } || { RESULTS["PVC creation for SC $i"]="FAILED"; RESIND+=("PVC creation for SC $i"); echo "PVC Check FAILED as PVC status wasn't found to be \"Bound\" even after max retries"; }	
+		        	[[ $PVCSTAT == 'Bound' ]] && { RESULTS["PVC creation for SC $i"]="PASSED"; RESIND+=("PVC creation for SC $i"); echo "PVC Check was PASSED"; export PVNAME=`kubectl get pvc $PVCNAME -n $NS -o yaml | grep 'volumeName:' | cut -f2 -d ':' | xargs`; patchpv $PVNAME; } || { RESULTS["PVC creation for SC $i"]="FAILED"; RESIND+=("PVC creation for SC $i"); echo "PVC Check FAILED as PVC status wasn't found to be \"Bound\" even after max retries"; }	
 				[[ $PVCSTAT != 'Bound' ]] && { echo "Here are PVC Events:"; echo "Describing the PVC $PVCNAME" >> $PATH_TO_YAML_FILES/cc-validate-storage.debug.txt; kubectl describe pvc $PVCNAME -n $NS >> $PATH_TO_YAML_FILES/cc-validate-storage.debug.txt; kubectl describe pvc $PVCNAME -n $NS | grep -A 10 'Events:' | grep -v 'Events:'; }
 				
 				RESULTS["volumesnapshot creation test for SC $i"]="SKIPPED"
 				RESIND+=("volumesnapshot creation test for SC $i")	
 				echo "No Volumesnapshot creation test will be performed for any Volumesnapshotclass of SC $i as one of PVC POD checks failed. Skipping to next Storageclass."
 				echo
-				deldepl $NS > /dev/null 2>&1
-				kubectl delete pvc $PVCNAME -n $NS --grace-period=0 --force  > /dev/null 2>&1 &
-				kubectl patch pvc $PVCNAME --type json --patch='[{ "op": "remove", "path": "/metadata/finalizers"}]' -n $NS  > /dev/null 2>&1
+				deldepl $NS 
+				kubectl delete pvc $PVCNAME -n $NS > /dev/null 2>&1 &
+				sleep $TIMEOUT;
+				#kubectl patch pvc $PVCNAME --type json --patch='[{ "op": "remove", "path": "/metadata/finalizers"}]' -n $NS  > /dev/null 2>&1
                		fi
 
 			verifycleanup $NS $TTC	
@@ -653,4 +726,4 @@ echo
 echo
 
 resultsummary 
-echo "\nPlease Check the file \"$PATH_TO_YAML_FILES/cc-validate-storage.debug.txt\", For more info.\n"
+echo "Please Check the file \"$PATH_TO_YAML_FILES/cc-validate-storage.debug.txt\", For more info."
