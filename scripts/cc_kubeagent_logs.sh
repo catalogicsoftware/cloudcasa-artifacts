@@ -56,13 +56,25 @@ function get_kubeagent_manager_pod_logs() {
 	print_header "Start of Kubeagent manager logs"
 	kubectl logs -n $CLOUDCASA_NAMESPACE "$KAGENT_MANAGER_POD"
 	print_footer "End of Kubeagent manager logs"
+
+	print_header "Start of Kubeagent manager prev logs"
+	kubectl logs -p -n $CLOUDCASA_NAMESPACE "$KAGENT_MANAGER_POD"
+	print_footer "End of Kubeagent manager prev logs"
 }
 
 # Saves logs from kubeagent pod (kubeagent and Velero containers).
 function get_kubeagent_pod_logs() {
+	print_header "Start of Kubeagent prev logs"
+	kubectl logs -p -n $CLOUDCASA_NAMESPACE "$KAGENT_POD" kubeagent
+	print_footer "End of Kubeagent prev logs"
+
 	print_header "Start of Kubeagent logs"
 	kubectl logs -n $CLOUDCASA_NAMESPACE "$KAGENT_POD" kubeagent
 	print_footer "End of Kubeagent logs"
+
+	print_header "Start of Velero prev logs"
+	kubectl logs -p -n $CLOUDCASA_NAMESPACE "$KAGENT_POD" kubeagent-backup-helper
+	print_footer "End of Velero prev logs"
 
 	print_header "Start of Velero logs"
 	kubectl logs -n $CLOUDCASA_NAMESPACE "$KAGENT_POD" kubeagent-backup-helper
