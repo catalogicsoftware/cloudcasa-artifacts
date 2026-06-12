@@ -31,7 +31,16 @@ function get_resources() {
 	kubectl get restores -n $CLOUDCASA_NAMESPACE
 	print_header "Velero DeleteBackupRequests resources in the $CLOUDCASA_NAMESPACE namespace"
 	kubectl get deletebackuprequests -n $CLOUDCASA_NAMESPACE
-	print_footer "End of resources in the $CLOUDCASA_NAMESPACE namespace"
+	print_header "VolumeSnapshot resources"
+	kubectl get volumesnapshots -A -o json
+	print_header "VolumeSnapshot resources - End"
+	print_header "VolumeSnapshotContent resources"
+	kubectl get volumesnapshotcontents -o json
+	print_header "VolumeSnapshotContent resources - End"
+	print_header "PVC resources in the $CLOUDCASA_NAMESPACE namespace"
+	kubectl get pvc -n $CLOUDCASA_NAMESPACE -o json
+	print_header "PVC resources in the $CLOUDCASA_NAMESPACE namespace - End"
+	print_footer "End of resources in the $CLOUDCASA_NAMESPACE namespace and others"
 }
 
 # Describe all resources in the cloudcasa namespace.
