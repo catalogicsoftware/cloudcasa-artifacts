@@ -40,6 +40,9 @@ function get_resources() {
 	print_header "PVC resources in the $CLOUDCASA_NAMESPACE namespace"
 	kubectl get pvc -n $CLOUDCASA_NAMESPACE -o json
 	print_header "PVC resources in the $CLOUDCASA_NAMESPACE namespace - End"
+    print_header "Configmap resources in the $CLOUDCASA_NAMESPACE namespace"
+    kubectl get cm -n $CLOUDCASA_NAMESPACE -o json
+    print_header "Configmap resources in the $CLOUDCASA_NAMESPACE namespace - End"
 	print_footer "End of resources in the $CLOUDCASA_NAMESPACE namespace and others"
 }
 
