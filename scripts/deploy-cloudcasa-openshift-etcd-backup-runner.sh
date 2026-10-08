@@ -10,6 +10,8 @@ LABEL_VALUE="enabled"
 LABEL_SELECTOR="$LABEL_KEY=$LABEL_VALUE"
 CONTAINER_NAME="cloudcasa-etcd-backup-runner"
 SCRIPT_NAME="/cloudcasa-etcd-backup.sh"
+BACKUP_RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-3}" # Default retention period in days; can be changed if needed
+
 
 # --- PVC Defaults (can be overridden by options) ---
 DEFAULT_PVC_NAME="cloudcasa-etcd-backup-pvc" # Default name
@@ -198,7 +200,12 @@ chroot /host /bin/mkdir -p "${HOST_BACKUP_DIR}"
 # Create target PVC dir (in container context)
 mkdir -p "${PVC_BACKUP_DIR}"
 # Clean up any old sentinel files
-rm -rf "/host${HOST_BACKUP_DIR}" "${PVC_BACKUP_DIR}"
+# Remove temporary backup files from the host
+rm -rf "/host${HOST_BACKUP_DIR}"
+# Remove persistent backup files older than the configured retention period
+find "${PVC_BACKUP_DIR}" -type f \
+  \( -name "snapshot_*.db" -o -name "static_kuberesources_*.tar.gz" \) \
+  -mtime +"${BACKUP_RETENTION_DAYS}" -delete
 
 # === Step 2: Start backup inside chroot (in background) ===
 echo "[HOOK] Running cluster-backup.sh in chroot"
